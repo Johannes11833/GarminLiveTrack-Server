@@ -9,12 +9,23 @@ import os
 import threading
 from typing import Any, Dict
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from garmin_livetrack import push
 from garmin_livetrack.tracker import Tracker, TrackerManager
+
+# Per-client-IP brute-force throttling for the token-guessing endpoints
+# below. Limits are applied inside the guard functions themselves (not via
+# the usual @limiter.limit() route decorator) because require_api_token runs
+# as a FastAPI `dependencies=[...]` check -- those are resolved *before*
+# FastAPI calls the (decorated) route function, so a decorator on the route
+# would never see rejected guesses at all.
+limiter = Limiter(key_func=get_remote_address)
 
 # Shared secret the email listener must present to start/stop tracking
 # sessions, so a random internet caller can't create or kill trackings.
@@ -28,7 +39,8 @@ DUMMY_MODE_ENABLED = os.getenv("LIVETRACK_ENABLE_DUMMY_MODE", "").lower() in {
 }
 
 
-def require_api_token(authorization: str = Header(default="")) -> None:
+@limiter.shared_limit("20/minute", scope="api_token_guess")
+def require_api_token(request: Request, authorization: str = Header(default="")) -> None:
     if not API_TOKEN:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -53,6 +65,8 @@ class SendMessageRequest(BaseModel):
 
 manager = TrackerManager()
 app = FastAPI(title="Garmin LiveTrack API")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(
     CORSMiddleware,
     # Local dev viewer; Flutter's web server uses a random port, so allow any.
@@ -116,7 +130,8 @@ def get_tracker_or_404(session_id: str) -> Tracker:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracking not found.")
 
 
-def get_tracker_with_token(session_id: str, token: str) -> Tracker:
+@limiter.shared_limit("60/minute", scope="session_token_guess")
+def get_tracker_with_token(request: Request, session_id: str, token: str) -> Tracker:
     """Require the Garmin LiveTrack share token, not just the session id, so
     someone who only guesses/observes the id can't read track/course/photo."""
     tracker = get_tracker_or_404(session_id)
@@ -129,23 +144,23 @@ def get_tracker_with_token(session_id: str, token: str) -> Tracker:
 
 
 @app.get("/trackings/{session_id}/token/{token}")
-def get_tracking(session_id: str, token: str):
-    return get_tracker_with_token(session_id, token).snapshot()
+def get_tracking(request: Request, session_id: str, token: str):
+    return get_tracker_with_token(request, session_id, token).snapshot()
 
 
 @app.get("/trackings/{session_id}/token/{token}/track")
-def get_track(session_id: str, token: str):
-    return get_tracker_with_token(session_id, token).get_track()
+def get_track(request: Request, session_id: str, token: str):
+    return get_tracker_with_token(request, session_id, token).get_track()
 
 
 @app.get("/trackings/{session_id}/token/{token}/course")
-def get_course(session_id: str, token: str):
-    return get_tracker_with_token(session_id, token).get_course()
+def get_course(request: Request, session_id: str, token: str):
+    return get_tracker_with_token(request, session_id, token).get_course()
 
 
 @app.get("/trackings/{session_id}/token/{token}/profile-image")
-def get_profile_image(session_id: str, token: str):
-    tracker = get_tracker_with_token(session_id, token)
+def get_profile_image(request: Request, session_id: str, token: str):
+    tracker = get_tracker_with_token(request, session_id, token)
     with tracker.lock:
         image = tracker.profile_image
         content_type = tracker.profile_image_content_type
@@ -161,7 +176,9 @@ def get_profile_image(session_id: str, token: str):
     "/trackings/{session_id}/token/{token}/message",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-def send_message(session_id: str, token: str, request: SendMessageRequest):
+def send_message(
+    http_request: Request, session_id: str, token: str, request: SendMessageRequest
+):
     sender = request.sender.strip()
     content = request.content.strip()
     if not sender or not content:
@@ -169,7 +186,7 @@ def send_message(session_id: str, token: str, request: SendMessageRequest):
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="sender and content must not be empty.",
         )
-    tracker = get_tracker_with_token(session_id, token)
+    tracker = get_tracker_with_token(http_request, session_id, token)
     try:
         tracker.send_message(sender, content)
     except RuntimeError as error:
@@ -206,13 +223,14 @@ def get_public_key():
 
 
 @app.post("/push/subscribe", status_code=status.HTTP_201_CREATED)
-def subscribe(request: SubscribeRequest):
-    if not push.token_valid(request.token):
+@limiter.shared_limit("10/minute", scope="push_token_guess")
+def subscribe(request: Request, body: SubscribeRequest):
+    if not push.token_valid(body.token):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid registration token.",
         )
-    subscription = request.subscription
+    subscription = body.subscription
     try:
         push.subscribe(subscription)
     except ValueError as error:
@@ -224,13 +242,14 @@ def subscribe(request: SubscribeRequest):
 
 
 @app.delete("/push/subscribe", status_code=status.HTTP_204_NO_CONTENT)
-def unsubscribe(request: UnsubscribeRequest):
-    if not push.token_valid(request.token):
+@limiter.shared_limit("10/minute", scope="push_token_guess")
+def unsubscribe(request: Request, body: UnsubscribeRequest):
+    if not push.token_valid(body.token):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Invalid registration token.",
         )
-    push.unsubscribe(request.endpoint)
+    push.unsubscribe(body.endpoint)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

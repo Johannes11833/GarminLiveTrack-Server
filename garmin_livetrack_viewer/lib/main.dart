@@ -24,6 +24,15 @@ const _pushTokenStorageKey = 'livetrack_push_token';
 const _lastSessionIdStorageKey = 'livetrack_last_session_id';
 const _lastSessionTokenStorageKey = 'livetrack_last_session_token';
 
+class _ApiException implements Exception {
+  const _ApiException(this.statusCode);
+
+  final int statusCode;
+
+  @override
+  String toString() => 'API returned HTTP $statusCode.';
+}
+
 String? _loadSavedSenderName() {
   try {
     return web.window.localStorage.getItem(_senderNameStorageKey);
@@ -77,6 +86,40 @@ String? _loadSavedSessionToken() {
 void _saveSessionToken(String token) {
   try {
     web.window.localStorage.setItem(_lastSessionTokenStorageKey, token);
+  } catch (_) {}
+}
+
+void _clearSessionCache(String? sessionId) {
+  if (sessionId == null) return;
+  try {
+    // Only clear the pair that failed: another tab may already have stored a
+    // newer session while this request was in flight.
+    if (_loadSavedSessionId() == sessionId) {
+      web.window.localStorage.removeItem(_lastSessionIdStorageKey);
+      web.window.localStorage.removeItem(_lastSessionTokenStorageKey);
+    }
+  } catch (_) {}
+}
+
+// Removes the session parameters from the address bar. Without this, the next
+// refresh would immediately read the stale id/token back out of the URL and
+// cache them again. Other parameters (e.g. the push token) are preserved.
+void _clearSessionFromUrl() {
+  try {
+    final base = Uri.base;
+    final params = Map<String, String>.from(base.queryParameters)
+      ..remove('id')
+      ..remove('sessionToken');
+    final url = Uri(
+      scheme: base.scheme,
+      userInfo: base.userInfo,
+      host: base.host,
+      port: base.hasPort ? base.port : null,
+      path: base.path,
+      queryParameters: params.isEmpty ? null : params,
+      fragment: base.hasFragment ? base.fragment : null,
+    );
+    web.window.history.replaceState(null, '', url.toString());
   } catch (_) {}
 }
 
@@ -342,7 +385,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
   Future<List<dynamic>> _getList(String path) async {
     final response = await http.get(_apiUri(path));
     if (response.statusCode != 200) {
-      throw Exception('API returned HTTP ${response.statusCode}.');
+      throw _ApiException(response.statusCode);
     }
     return jsonDecode(response.body) as List<dynamic>;
   }
@@ -415,7 +458,9 @@ class _LiveTrackPageState extends State<LiveTrackPage>
 
   Future<Map<String, dynamic>?> _getMap(String path) async {
     final response = await http.get(_apiUri(path));
-    if (response.statusCode != 200) return null;
+    if (response.statusCode != 200) {
+      throw _ApiException(response.statusCode);
+    }
     final body = jsonDecode(response.body);
     return body is Map<String, dynamic> ? body : null;
   }
@@ -465,16 +510,35 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       );
   }
 
+  void _resetSessionState() {
+    _lastFingerprint = '';
+    if (!mounted) return;
+    setState(() {
+      _track = [];
+      _course = [];
+      _session = null;
+      _metaData = null;
+      _heartRateHistory = [];
+      _speedHistory = [];
+      _elevationHistory = [];
+      _lastUpdate = null;
+      _trackerState = null;
+    });
+  }
+
   Future<void> _refresh() async {
     if (_refreshing) return;
     _refreshing = true;
+    final sessionId = _resolveSessionId();
+    final sessionToken = sessionId == null ? null : _resolveSessionToken();
     try {
-      final sessionId = _resolveSessionId();
       if (sessionId == null) {
-        _showToast('No session. Pass ?id=<session id> to the app URL.');
+        // Don't overwrite a "session cleared" message with the generic one.
+        if (_lastToast.isEmpty) {
+          _showToast('No session. Pass ?id=<session id> to the app URL.');
+        }
         return;
       }
-      final sessionToken = _resolveSessionToken();
       if (sessionToken == null) {
         _showToast(
           'Missing session token. Pass ?sessionToken=<token> to the app URL.',
@@ -535,6 +599,20 @@ class _LiveTrackPageState extends State<LiveTrackPage>
         _trackerState = trackerState;
       });
       _centerMapOnce(track, course);
+    } on _ApiException catch (error) {
+      if (error.statusCode == 404 || error.statusCode == 403) {
+        _clearSessionCache(sessionId);
+        _clearSessionFromUrl();
+        _resetSessionState();
+        _showToast(
+          error.statusCode == 404
+              ? 'Tracking no longer available. Cleared the saved session.'
+              : 'Saved session token is invalid. Cleared the saved session.',
+        );
+      } else {
+        log("$error");
+        _showToast('Cannot reach API: $error');
+      }
     } catch (error, stackTrace) {
       log("$error");
       log("$stackTrace");

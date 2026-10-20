@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="garmin_livetrack_viewer/web/icon-512.png" width="144" alt="GarminLiveTrack app icon">
+  <img src="garmin_livetrack_viewer/web/icons/icon-512.png" width="144" alt="GarminLiveTrack app icon">
 </p>
 
 <h1 align="center">GarminLiveTrack Server</h1>

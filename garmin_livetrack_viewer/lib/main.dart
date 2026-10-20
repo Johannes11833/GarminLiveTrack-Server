@@ -606,8 +606,8 @@ class _LiveTrackPageState extends State<LiveTrackPage>
         _resetSessionState();
         _showToast(
           error.statusCode == 404
-              ? 'Tracking no longer available. Cleared the saved session.'
-              : 'Saved session token is invalid. Cleared the saved session.',
+              ? 'Tracking not found.'
+              : 'Session token is invalid.',
         );
       } else {
         log("$error");

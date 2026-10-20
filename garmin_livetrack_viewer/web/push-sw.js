@@ -18,8 +18,8 @@ self.addEventListener('push', (event) => {
   const title = payload.title || 'Garmin LiveTrack';
   const options = {
     body: payload.body || '',
-    icon: 'icons/Icon-192.png',
-    badge: 'icons/Icon-192.png',
+    icon: 'icons/icon-192.png',
+    badge: 'icons/icon-192.png',
     tag: payload.tag || 'livetrack',
     data: {
       sessionId: payload.sessionId || '',

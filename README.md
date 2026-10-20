@@ -126,6 +126,17 @@ Use `docker compose up -d --build` to build everything locally, or
 
 ### Run livetrack bot w/o a container
 
+The API dependencies (`fastapi`, `uvicorn`, `playwright`, `slowapi` and
+`pywebpush`) live in the optional `api` group, so install them explicitly --
+plain `poetry install` skips that group:
+
+```bash
+poetry install --with api
+poetry run playwright install chromium
+```
+
+Then start both processes:
+
 ```bash
 # terminal 1: API
 poetry run garmin-livetrack-api
@@ -141,7 +152,7 @@ same-origin API requests. Install the dependency and browser once, then pass a
 LiveTrack share URL:
 
 ```bash
-poetry install
+poetry install --with api
 poetry run playwright install chromium
 poetry run python garmin_livetrack/playwright_livetrack.py "https://livetrack.garmin.com/session/<id>/token/<token>"
 ```
@@ -154,13 +165,23 @@ The extractor writes `session.json`, `track.json`, and (when available)
 Run the independent multi-session API with:
 
 ```bash
-poetry install
+poetry install --with api
 poetry run playwright install chromium
 poetry run garmin-livetrack-api
 ```
 
-Starting and stopping a tracking session requires the shared `LIVETRACK_API_TOKEN`
-(see below):
+For development, run it with autoreload instead:
+
+```bash
+poetry run uvicorn garmin_livetrack.livetrack_api:app --host 127.0.0.1 --port 8000 --reload
+```
+
+The API reads the repo-root `.env` on startup (via `push.py`'s
+`load_dotenv()`), so restart it after changing `.env`.
+
+Starting, stopping, and listing tracking sessions require the shared
+`LIVETRACK_API_TOKEN` (see below); if it is unset, those endpoints return
+HTTP 503:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/trackings \

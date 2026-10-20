@@ -1,16 +1,37 @@
-<h1>GarminLiveTrack Server</h1>
+<p align="center">
+  <img src="garmin_livetrack_viewer/web/icon-512.png" width="144" alt="GarminLiveTrack app icon">
+</p>
 
-<h2>Table of Contents</h2>
+<h1 align="center">GarminLiveTrack Server</h1>
 
-- [Demo](#demo)
-- [Docker Setup](#docker-setup)
-  - [Docker compose setup](#docker-compose-setup)
-  - [Run livetrack bot w/o a container](#run-livetrack-bot-wo-a-container)
-  - [Extract LiveTrack data](#extract-livetrack-data)
-  - [LiveTrack REST API](#livetrack-rest-api)
-  - [Web viewer \& push notifications](#web-viewer--push-notifications)
-  - [Registration token](#registration-token)
-  - [Example .env file](#example-env-file)
+<p align="center">
+  <strong>Self-hosted Garmin LiveTrack, without Garmin's share page.</strong><br>
+An email listener auto-starts tracking sessions from incoming Garmin emails, a REST API manages concurrent sessions, and a Flutter web viewer shows the live map with push notifications to registered devices.
+</p>
+
+<p align="center">
+  <a href="https://github.com/Johannes11833/GarminLiveTrack-Server/releases/latest">
+    <img src="https://img.shields.io/github/v/release/Johannes11833/GarminLiveTrack-Server?style=for-the-badge&logo=github&label=release" alt="Latest release">
+  </a>
+  <a href="https://github.com/Johannes11833/GarminLiveTrack-Server/actions/workflows/publish-docker.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/Johannes11833/GarminLiveTrack-Server/publish-docker.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=containers" alt="Container build status">
+  </a>
+  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/Flutter-3.47-02569B?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter 3.47">
+  <img src="https://img.shields.io/badge/Docker-amd64%20%7C%20arm64-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker images for amd64 and arm64">
+</p>
+
+<p align="center">
+  <a href="#demo">Demo</a> ·
+  <a href="#highlights">Highlights</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#livetrack-rest-api">REST API</a> ·
+  <a href="#web-viewer--push-notifications">Viewer &amp; push</a> ·
+  <a href="#example-env-file">Configuration</a>
+</p>
+
+---
 
 ## Demo
 
@@ -32,6 +53,42 @@
   <sub>Desktop: live map and session card with heart rate, speed and elevation graphs side by side</sub>
 </p>
 
+## Highlights
+
+- 🧵 **Multiple riders at once** — every session runs in its own Playwright worker, so concurrent sessions don't step on each other.
+- 🗺️ **Live Flutter viewer** — full-screen map, route, distance, speed, elevation and heart-rate charts, responsive from phone to desktop.
+- 🔔 **Push without Firebase** — standard Web Push (VAPID) sends "started" and "ended" notifications that deep-link straight into the session.
+- 🧪 **Dummy mode** — simulate a five-minute session with synthetic data to try the UI without a Garmin link.
+- 🐳 **Multi-arch images** — API, listener and viewer ship as `linux/amd64` and `linux/arm64` containers.
+
+## How it works
+
+```mermaid
+flowchart LR
+    Mail["Garmin LiveTrack email"] -->|IMAP| Listener["Email listener"]
+    Listener -->|"POST /trackings"| API["REST API"]
+    API <-->|"Playwright"| Garmin["livetrack.garmin.com"]
+    API -->|"JSON"| Viewer["Flutter web viewer"]
+    API -->|"Web Push (VAPID)"| Devices["Registered devices"]
+```
+
+## Quick start
+
+**Prerequisite:** Docker with Compose v2.
+
+```bash
+git clone https://github.com/Johannes11833/GarminLiveTrack-Server.git
+cd GarminLiveTrack-Server
+
+# create .env with at least your IMAP credentials (see Example .env file below)
+docker compose up -d --build
+```
+
+Open the viewer at `https://localhost/?id=<session id>&sessionToken=<garmin token>`
+and add `&token=<push token>` to enable notifications. To try it without a real
+Garmin link, set `LIVETRACK_ENABLE_DUMMY_MODE=1` in `.env`; a simulated session
+starts automatically and the API logs a ready-to-open viewer URL.
+
 ## Docker Setup
 ### Docker compose setup
 
@@ -46,6 +103,20 @@ The email listener watches the configured mailbox and automatically starts a
 tracking session through the API for every received Garmin LiveTrack link.
 Registered devices then receive push notifications (see "Web viewer & push
 notifications" below).
+
+### Container images
+
+Prebuilt images are published to GitHub Container Registry for `linux/amd64`
+and `linux/arm64`, tagged both `latest` and the release version:
+
+| Image                                                                                                                                                             | Purpose                            |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| [`ghcr.io/johannes11833/garmin-livetrack-api`](https://github.com/Johannes11833/GarminLiveTrack-Server/pkgs/container/garmin-livetrack-api)                       | FastAPI + Playwright tracking API  |
+| [`ghcr.io/johannes11833/garmin-livetrack-email-listener`](https://github.com/Johannes11833/GarminLiveTrack-Server/pkgs/container/garmin-livetrack-email-listener) | IMAP listener that starts sessions |
+| [`ghcr.io/johannes11833/garmin-livetrack-viewer`](https://github.com/Johannes11833/GarminLiveTrack-Server/pkgs/container/garmin-livetrack-viewer)                 | Flutter web viewer served by nginx |
+
+Use `docker compose up -d --build` to build everything locally, or
+`docker compose pull` to grab the latest published images.
 
 ### Run livetrack bot w/o a container
 
@@ -257,3 +328,9 @@ LIVETRACK_TRACKER_MAX_AGE_SECONDS = "172800"
 # via a Cloudflare Tunnel instead of exposing Caddy directly (see README)
 CLOUDFLARE_TUNNEL_TOKEN = "..."
 ```
+
+---
+
+<p align="center">
+  <sub>Built with FastAPI, Playwright and Flutter. Not affiliated with Garmin.</sub>
+</p>

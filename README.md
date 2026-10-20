@@ -11,14 +11,20 @@ An email listener auto-starts tracking sessions from incoming Garmin emails, a R
 
 <p align="center">
   <a href="https://github.com/Johannes11833/GarminLiveTrack-Server/releases/latest">
-    <img src="https://img.shields.io/github/v/release/Johannes11833/GarminLiveTrack-Server?style=for-the-badge&logo=github&label=release" alt="Latest release">
+    <img src="https://img.shields.io/github/v/release/Johannes11833/GarminLiveTrack-Server" alt="Latest release">
   </a>
   <a href="https://github.com/Johannes11833/GarminLiveTrack-Server/actions/workflows/publish-docker.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/Johannes11833/GarminLiveTrack-Server/publish-docker.yml?style=for-the-badge&logo=githubactions&logoColor=white&label=containers" alt="Container build status">
+    <img src="https://img.shields.io/github/actions/workflow/status/Johannes11833/GarminLiveTrack-Server/publish-docker.yml?label=containers" alt="Container build status">
   </a>
-  <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/Flutter-3.47-02569B?style=for-the-badge&logo=flutter&logoColor=white" alt="Flutter 3.47">
-  <img src="https://img.shields.io/badge/Docker-amd64%20%7C%20arm64-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker images for amd64 and arm64">
+  <a href="https://www.python.org/">
+    <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB" alt="Python 3.10+">
+  </a>
+  <a href="https://flutter.dev/">
+    <img src="https://img.shields.io/badge/Flutter-3.47-02569B" alt="Flutter 3.47">
+  </a>
+  <a href="https://www.docker.com/">
+    <img src="https://img.shields.io/badge/Docker-amd64%20%7C%20arm64-2496ED" alt="Docker images for amd64 and arm64">
+  </a>
 </p>
 
 <p align="center">

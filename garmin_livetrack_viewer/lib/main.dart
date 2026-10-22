@@ -645,7 +645,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
   Icon _metaIcon(String label) => switch (label) {
     'Distance' => const Icon(Icons.route, size: 18),
     'Duration' => const Icon(Icons.timer_outlined, size: 18),
-    'Current Epeed' => const Icon(Icons.speed, size: 18),
+    'Current Speed' => const Icon(Icons.speed, size: 18),
     'Current Elevation' => const Icon(Icons.terrain, size: 18),
     'Heart rate' => const Icon(Icons.favorite, size: 18),
     _ => const Icon(Icons.info_outline, size: 18),

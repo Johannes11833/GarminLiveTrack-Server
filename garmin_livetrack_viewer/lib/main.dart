@@ -729,6 +729,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       profileImageUrl: sessionId != null ? _profileImageUrl(sessionId) : null,
       startTime: _parseIsoDateTime(_session?['start']),
       lastUpdate: _lastUpdate,
+      endTime: _parseIsoDateTime(_session?['end']),
       ended: _trackerState == 'ended',
       initialSender: _lastSenderName,
       onSendMessage: _sendMessage,
@@ -1034,6 +1035,7 @@ class _LiveUserOverlay extends StatefulWidget {
     this.sessionName,
     this.startTime,
     this.lastUpdate,
+    this.endTime,
     this.ended = false,
     this.initialSender,
     this.chartSeries = const [],
@@ -1045,6 +1047,7 @@ class _LiveUserOverlay extends StatefulWidget {
   final String? sessionName;
   final DateTime? startTime;
   final DateTime? lastUpdate;
+  final DateTime? endTime;
   final bool ended;
   final String? initialSender;
   final List<_ChartSeries> chartSeries;
@@ -1080,8 +1083,35 @@ class _LiveUserOverlayState extends State<_LiveUserOverlay>
   // expanded; not tied to actual content height, just how the drag feels.
   static const _dragExtent = 220.0;
 
+  // How old the last position can get before the "Updated" timestamp is shown
+  // in red. The periodic refresh stops rebuilding once the data stops
+  // changing, so tick here to pick up the stale state without new data.
+  static const _staleAfter = Duration(minutes: 5);
+  late final Timer _staleTimer;
+  bool _wasStale = false;
+
+  bool get _isStale {
+    if (widget.ended) return false;
+    final lastUpdate = widget.lastUpdate;
+    return lastUpdate != null &&
+        DateTime.now().difference(lastUpdate) > _staleAfter;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _staleTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!mounted) return;
+      final stale = _isStale;
+      if (stale != _wasStale) {
+        setState(() => _wasStale = stale);
+      }
+    });
+  }
+
   @override
   void dispose() {
+    _staleTimer.cancel();
     _expandController.dispose();
     _senderController.dispose();
     _contentController.dispose();
@@ -1361,15 +1391,30 @@ class _LiveUserOverlayState extends State<_LiveUserOverlay>
   }
 
   Widget? _timestampsText(BuildContext context) {
-    if (widget.startTime == null && widget.lastUpdate == null) return null;
-    return Text(
-      [
-        if (widget.startTime != null)
-          'Started ${_formatTime(widget.startTime!)}',
-        if (widget.lastUpdate != null)
-          'Updated ${_formatTime(widget.lastUpdate!)}',
-      ].join('  •  '),
-      style: Theme.of(context).textTheme.bodySmall,
+    final statusTime = widget.ended
+        ? (widget.endTime ?? widget.lastUpdate)
+        : widget.lastUpdate;
+    if (widget.startTime == null && statusTime == null) return null;
+    final baseStyle = Theme.of(context).textTheme.bodySmall;
+    return Text.rich(
+      TextSpan(
+        children: [
+          if (widget.startTime != null)
+            TextSpan(text: 'Started ${_formatTime(widget.startTime!)}'),
+          if (widget.startTime != null && statusTime != null)
+            const TextSpan(text: '  •  '),
+          if (statusTime != null)
+            TextSpan(
+              text:
+                  '${widget.ended ? 'Ended' : 'Updated'} '
+                  '${_formatTime(statusTime)}',
+              style: _isStale
+                  ? TextStyle(color: Theme.of(context).colorScheme.error)
+                  : null,
+            ),
+        ],
+      ),
+      style: baseStyle,
     );
   }
 

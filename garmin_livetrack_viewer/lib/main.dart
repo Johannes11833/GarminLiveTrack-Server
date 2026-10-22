@@ -235,6 +235,10 @@ class _LiveTrackPageState extends State<LiveTrackPage>
   bool _userInteracted = false;
   bool _hasPositionedMap = false;
   bool _refreshing = false;
+  // Focus is a two-step action: the first press recenters at the current
+  // zoom, a second consecutive press restores the default zoom. Any manual
+  // map movement starts the cycle over.
+  bool _focusedAtCurrentZoom = false;
   String _lastFingerprint = '';
   String _lastToast = '';
   Map<String, dynamic>? _session;
@@ -704,11 +708,16 @@ class _LiveTrackPageState extends State<LiveTrackPage>
         ? _track.last
         : (_course.isNotEmpty ? _course.first : null);
     if (target == null) return;
-    _animateCamera(target, _centerZoom);
+    final zoom = _focusedAtCurrentZoom
+        ? _centerZoom
+        : _mapController.camera.zoom;
+    _focusedAtCurrentZoom = !_focusedAtCurrentZoom;
+    _animateCamera(target, zoom);
   }
 
   void _zoomBy(double delta) {
     if (!_mapReady) return;
+    _focusedAtCurrentZoom = false;
     _animateCamera(
       _mapController.camera.center,
       _mapController.camera.zoom + delta,
@@ -792,6 +801,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
                       if (event.source != MapEventSource.mapController &&
                           event.source != MapEventSource.nonRotatedSizeChange) {
                         _userInteracted = true;
+                        _focusedAtCurrentZoom = false;
                       }
                     },
                   ),

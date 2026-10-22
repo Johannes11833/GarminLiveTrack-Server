@@ -5,17 +5,7 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Flutter",
-            "type": "dart",
-            "request": "launch",
-            "program": "garmin_livetrack_viewer/lib/main.dart",
-            "deviceId": "chrome",
-            "toolArgs": [
-                "--wasm"
-            ]
-        },
-        {
-            "name": "Flutter (local API)",
+            "name": "Flutter (chrome)",
             "type": "dart",
             "request": "launch",
             "program": "garmin_livetrack_viewer/lib/main.dart",
@@ -25,12 +15,28 @@
             ]
         },
         {
-            "name": "Python Debugger: main.py",
+            "name": "Flutter (web server)",
+            "type": "dart",
+            "request": "launch",
+            "program": "garmin_livetrack_viewer/lib/main.dart",
+            "deviceId": "web-server",
+            "args": [
+                "--web-hostname",
+                "0.0.0.0",
+                "--web-port",
+                "8080",
+                "--dart-define=API_BASE_URL=http://localhost:8000",
+            ]
+        },
+        {
+            "name": "Python Debugger: livetrack_api.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "garmin_livetrack/main.py",
+            "program": "garmin_livetrack/livetrack_api.py",
             "console": "integratedTerminal",
-            "justMyCode": false
+            "env": {
+                "LIVETRACK_ENABLE_DUMMY_MODE": "yes"
+            }
         }
     ]
 }

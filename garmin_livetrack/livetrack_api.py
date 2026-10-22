@@ -112,7 +112,8 @@ def start_tracking(request: StartTrackingRequest):
     try:
         tracker = manager.start(request.url)
     except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(error))
     return tracker.snapshot()
 
 
@@ -127,7 +128,8 @@ def get_tracker_or_404(session_id: str) -> Tracker:
     try:
         return manager.get(session_id)
     except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tracking not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tracking not found.")
 
 
 @limiter.shared_limit("60/minute", scope="session_token_guess")
@@ -190,7 +192,8 @@ def send_message(
     try:
         tracker.send_message(sender, content)
     except RuntimeError as error:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error))
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=str(error))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -203,7 +206,8 @@ def stop_tracking(session_id: str):
     try:
         manager.stop(session_id)
     except ValueError as error:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(error))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
@@ -260,3 +264,7 @@ def cli() -> None:
     # default to loopback-only for local development.
     host = os.getenv("LIVETRACK_API_HOST", "127.0.0.1")
     uvicorn.run(app, host=host, port=8000)
+
+
+if __name__ == "__main__":
+    cli()

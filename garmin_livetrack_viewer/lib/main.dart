@@ -1243,7 +1243,7 @@ class _LiveUserOverlayState extends State<_LiveUserOverlay>
       );
     }
 
-    const cardWidth = 370.0;
+    const cardWidth = 400.0;
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: cardWidth),
       child: Card(

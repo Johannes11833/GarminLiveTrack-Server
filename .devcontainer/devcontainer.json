@@ -1,0 +1,37 @@
+{
+    "name": "Python + Flutter",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "FLUTTER_VERSION": "3.47.0"
+        }
+    },
+    "remoteUser": "vscode",
+    "forwardPorts": [
+        8000,
+        8080
+    ],
+    "portsAttributes": {
+        "8000": {
+            "label": "Python API"
+        },
+        "8080": {
+            "label": "Flutter Web"
+        }
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "Dart-Code.dart-code",
+                "Dart-Code.flutter"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+                "editor.formatOnSave": true
+            }
+        }
+    },
+    "postCreateCommand": "python -m venv .venv && .venv/bin/python -m pip install --upgrade pip"
+}

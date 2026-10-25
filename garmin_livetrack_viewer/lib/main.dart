@@ -1230,9 +1230,8 @@ class _LiveUserOverlayState extends State<_LiveUserOverlay>
                   ],
                 ),
               ),
-              SizeTransition(
-                sizeFactor: _expandController,
-                alignment: Alignment.topCenter,
+              _ExpandableSection(
+                animation: _expandController,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -1462,6 +1461,35 @@ class _LiveUserOverlayState extends State<_LiveUserOverlay>
   }
 }
 
+/// Animates a section open and closed like [SizeTransition].
+///
+/// Unlike [SizeTransition], which always clips its child, this stops clipping
+/// once the section is fully open. That lets the chart's touch tooltip float
+/// above the chart (as it does in the desktop layout) instead of being cut
+/// off at the section's top edge.
+class _ExpandableSection extends StatelessWidget {
+  const _ExpandableSection({required this.animation, required this.child});
+
+  final Animation<double> animation;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, child) => ClipRect(
+        clipBehavior: animation.value >= 1.0 ? Clip.none : Clip.hardEdge,
+        child: Align(
+          alignment: Alignment.topCenter,
+          heightFactor: animation.value,
+          child: child,
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
 class _ProfileAvatar extends StatelessWidget {
   const _ProfileAvatar({required this.imageUrl, required this.ended});
 
@@ -1575,6 +1603,9 @@ class _MetricChart extends StatelessWidget {
           ),
           lineTouchData: LineTouchData(
             touchTooltipData: LineTouchTooltipData(
+              // Keep the tooltip inside the chart horizontally, but let it
+              // float above high points vertically, as it does on desktop.
+              fitInsideHorizontally: true,
               getTooltipItems: (touchedSpots) => touchedSpots
                   .map(
                     (spot) => LineTooltipItem(

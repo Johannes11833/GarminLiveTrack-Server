@@ -814,11 +814,15 @@ class _LiveTrackPageState extends State<LiveTrackPage>
                         sprites: _vectorStyle!.sprites,
                         // Screen-space labels are repositioned and redrawn on
                         // every camera frame, which is the dominant UI-thread
-                        // cost while pinch-zooming on a phone. Baking them into
-                        // each tile removes that cost. Rotation is disabled in
-                        // this map, so the main visual trade-off (labels rotate
-                        // with the map) does not apply here.
-                        labelMode: vt.LabelMode.tile,
+                        // cost while pinch-zooming on a phone. Bake them into
+                        // each tile on the same narrow layouts that use the
+                        // compact bottom sheet; keep the sharper screen-space
+                        // labels on desktop. Rotation is disabled in this map,
+                        // so the main visual trade-off of tile labels (text
+                        // rotating with the map) does not apply here.
+                        labelMode: isCompact
+                            ? vt.LabelMode.tile
+                            : vt.LabelMode.screen,
                       ),
                     PolylineLayer(
                       polylines: [

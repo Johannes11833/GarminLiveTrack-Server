@@ -2,9 +2,7 @@
     "name": "Python + Flutter",
     "build": {
         "dockerfile": "Dockerfile",
-        "args": {
-            "FLUTTER_VERSION": "3.47.0"
-        }
+        "context": ".."
     },
     "remoteUser": "vscode",
     "forwardPorts": [

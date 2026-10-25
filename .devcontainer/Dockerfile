@@ -1,8 +1,9 @@
 
 FROM mcr.microsoft.com/devcontainers/python:3.12
 
-ARG FLUTTER_VERSION=3.47.0
-
+# The exact Flutter release is shared with Dockerfile.viewer via the
+# repository-root .flutter-version file (devcontainer.json sets the build
+# context to the repository root so this COPY can reach it).
 ENV FLUTTER_HOME=/opt/flutter
 ENV PATH="${FLUTTER_HOME}/bin:${FLUTTER_HOME}/bin/cache/dart-sdk/bin:${PATH}"
 
@@ -21,11 +22,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgtk-3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone \
-    --depth 1 \
-    --branch "${FLUTTER_VERSION}" \
-    https://github.com/flutter/flutter.git \
-    "${FLUTTER_HOME}" \
+COPY .flutter-version /tmp/flutter-version
+
+RUN FLUTTER_VERSION="$(cat /tmp/flutter-version)" && \
+    git clone \
+      --depth 1 \
+      --branch "${FLUTTER_VERSION}" \
+      https://github.com/flutter/flutter.git \
+      "${FLUTTER_HOME}" \
     && git config --global --add safe.directory "${FLUTTER_HOME}" \
     && flutter precache --web \
     && flutter config --no-analytics

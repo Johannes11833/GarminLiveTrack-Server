@@ -38,7 +38,7 @@ dependencies:
   latlong2: ^0.10.1
   http: ^1.6.0
   web: ^1.1.0
-  flutter_map_vector_tiles: ^2.8.1
+  flutter_map_vector_tiles: ^2.10.1
   fl_chart: ^1.2.0
   package_info_plus: ^10.2.1 
 

@@ -812,6 +812,17 @@ class _LiveTrackPageState extends State<LiveTrackPage>
                         tileProviders: _vectorStyle!.providers,
                         rasterSources: _vectorStyle!.rasterSources,
                         sprites: _vectorStyle!.sprites,
+                        // Screen-space labels are repositioned and redrawn on
+                        // every camera frame, which is the dominant UI-thread
+                        // cost while pinch-zooming on a phone. Bake them into
+                        // each tile on the same narrow layouts that use the
+                        // compact bottom sheet; keep the sharper screen-space
+                        // labels on desktop. Rotation is disabled in this map,
+                        // so the main visual trade-off of tile labels (text
+                        // rotating with the map) does not apply here.
+                        labelMode: isCompact
+                            ? vt.LabelMode.tile
+                            : vt.LabelMode.screen,
                       ),
                     PolylineLayer(
                       polylines: [
@@ -1655,26 +1666,30 @@ class _PulsingPositionMarkerState extends State<_PulsingPositionMarker>
         ),
       ),
     );
-    return AnimatedBuilder(
-      animation: _controller,
-      child: dot,
-      builder: (context, child) {
-        final t = _controller.value;
-        return Stack(
-          alignment: Alignment.center,
-          children: [
-            Container(
-              width: 24 + 48 * t,
-              height: 24 + 48 * t,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: positionColor.withValues(alpha: 0.30 * (1 - t)),
+    return RepaintBoundary(
+      // Keep the endlessly repeating pulse from invalidating the whole map
+      // (vector tiles, labels and track) on every frame.
+      child: AnimatedBuilder(
+        animation: _controller,
+        child: dot,
+        builder: (context, child) {
+          final t = _controller.value;
+          return Stack(
+            alignment: Alignment.center,
+            children: [
+              Container(
+                width: 24 + 48 * t,
+                height: 24 + 48 * t,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: positionColor.withValues(alpha: 0.30 * (1 - t)),
+                ),
               ),
-            ),
-            child!,
-          ],
-        );
-      },
+              child!,
+            ],
+          );
+        },
+      ),
     );
   }
 }

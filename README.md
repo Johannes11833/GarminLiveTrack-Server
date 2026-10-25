@@ -20,7 +20,7 @@ An email listener auto-starts tracking sessions from incoming Garmin emails, a R
     <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB" alt="Python 3.10+">
   </a>
   <a href="https://flutter.dev/">
-    <img src="https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2FJohannes11833%2FGarminLiveTrack-Server%2Fmain%2FDockerfile.viewer&search=FLUTTER_VERSION%3D(%5B0-9.%5D%2B)&replace=%241&label=Flutter&color=02569B" alt="Flutter version">
+    <img src="https://img.shields.io/badge/dynamic/regex?url=https%3A%2F%2Fraw.githubusercontent.com%2FJohannes11833%2FGarminLiveTrack-Server%2Fmain%2F.flutter-version&search=(%5B0-9.%5D%2B)&replace=%241&label=Flutter&color=02569B" alt="Flutter version">
   </a>
   <a href="https://www.docker.com/">
     <img src="https://img.shields.io/badge/Docker-amd64%20%7C%20arm64-2496ED" alt="Docker images for amd64 and arm64">

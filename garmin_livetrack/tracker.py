@@ -3,6 +3,7 @@ URL, plus TrackerManager for keeping track of all active sessions.
 """
 
 import copy
+import math
 import os
 import queue
 import re
@@ -71,11 +72,20 @@ def normalize_point(raw: Dict[str, Any]) -> Dict[str, Any]:
 def normalize_course(data: Dict[str, Any]) -> List[Dict[str, float]]:
     points = []
     for course in data.get("courses") or []:
-        for point in course.get("coursePoints") or []:
+        # Garmin returns the route geometry in "geoPoints"; "coursePoints"
+        # only contains a few named waypoints (turns, summits, ...), so using
+        # those as the route draws a handful of lines between unrelated
+        # places. Fall back for payloads that only provide waypoints.
+        route_points = course.get("geoPoints") or course.get("coursePoints") or []
+        for point in route_points:
             position = point.get("position") or {}
             latitude, longitude = position.get("lat"), position.get("lon")
             if latitude is not None and longitude is not None:
                 points.append({"latitude": latitude, "longitude": longitude})
+        if points:
+            # The viewer renders one continuous course polyline; prefer the
+            # first course that actually has geometry.
+            break
     return points
 
 
@@ -91,6 +101,33 @@ def is_live(session: Dict[str, Any]) -> bool:
         )
     except ValueError:
         return True
+
+
+def _timestamp_ms(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        return int(
+            datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000
+        )
+    except ValueError:
+        return None
+
+
+def _distance_meters(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+    lat1, lon1 = a.get("latitude"), a.get("longitude")
+    lat2, lon2 = b.get("latitude"), b.get("longitude")
+    if None in (lat1, lon1, lat2, lon2):
+        return 0.0
+    radius = 6_371_000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    h = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    return 2 * radius * math.asin(math.sqrt(min(1.0, h)))
 
 
 class Tracker:
@@ -346,7 +383,30 @@ class Tracker:
                 )
             ]
             if new_points:
-                self.track.extend(new_points)
+                # Garmin's track-point payload no longer includes running
+                # distance/duration totals, so derive them when absent. The
+                # viewer hides a chip whose metadata value is null.
+                start_ms = _timestamp_ms(self.track_begin)
+                for point in new_points:
+                    meta = point["metaData"]
+                    if meta.get("TOTAL_DISTANCE") is None:
+                        if self.track:
+                            previous = self.track[-1]
+                            meta["TOTAL_DISTANCE"] = (
+                                previous["metaData"].get("TOTAL_DISTANCE") or 0.0
+                            ) + _distance_meters(previous, point)
+                        else:
+                            meta["TOTAL_DISTANCE"] = 0.0
+                    if meta.get("TOTAL_DURATION") is None:
+                        started = start_ms
+                        if started is None and self.track:
+                            started = self.track[0]["timestamp"]
+                        meta["TOTAL_DURATION"] = (
+                            max(0, int((point["timestamp"] - started) / 1000))
+                            if started is not None
+                            else 0
+                        )
+                    self.track.append(point)
                 self.last_timestamp = new_points[-1]["timestamp"]
                 point = new_points[-1]
                 print(
@@ -367,11 +427,13 @@ class Tracker:
                 print(f"[{self.session_id}] course: {len(course)} point(s)")
 
     def _run(self) -> None:
-        session_url = f"https://livetrack.garmin.com/api/sessions/{self.session_id}"
+        # Garmin's LiveTrack frontend moved session metadata to the v2 API and
+        # courses to v1; the old /api/sessions/{id} route now answers 405.
+        session_url = f"https://livetrack.garmin.com/api/v2/sessions/{self.session_id}"
         track_url = (
             f"https://livetrack.garmin.com/api/sessions/{self.session_id}/track-points/common"
         )
-        course_url = f"https://livetrack.garmin.com/api/sessions/{self.session_id}/courses"
+        course_url = f"https://livetrack.garmin.com/api/v1/sessions/{self.session_id}/courses"
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)

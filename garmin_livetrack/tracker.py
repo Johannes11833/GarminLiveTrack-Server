@@ -71,11 +71,20 @@ def normalize_point(raw: Dict[str, Any]) -> Dict[str, Any]:
 def normalize_course(data: Dict[str, Any]) -> List[Dict[str, float]]:
     points = []
     for course in data.get("courses") or []:
-        for point in course.get("coursePoints") or []:
+        # Garmin returns the route geometry in "geoPoints"; "coursePoints"
+        # only contains a few named waypoints (turns, summits, ...), so using
+        # those as the route draws a handful of lines between unrelated
+        # places. Fall back for payloads that only provide waypoints.
+        route_points = course.get("geoPoints") or course.get("coursePoints") or []
+        for point in route_points:
             position = point.get("position") or {}
             latitude, longitude = position.get("lat"), position.get("lon")
             if latitude is not None and longitude is not None:
                 points.append({"latitude": latitude, "longitude": longitude})
+        if points:
+            # The viewer renders one continuous course polyline; prefer the
+            # first course that actually has geometry.
+            break
     return points
 
 
@@ -367,11 +376,13 @@ class Tracker:
                 print(f"[{self.session_id}] course: {len(course)} point(s)")
 
     def _run(self) -> None:
-        session_url = f"https://livetrack.garmin.com/api/sessions/{self.session_id}"
+        # Garmin's LiveTrack frontend moved session metadata to the v2 API and
+        # courses to v1; the old /api/sessions/{id} route now answers 405.
+        session_url = f"https://livetrack.garmin.com/api/v2/sessions/{self.session_id}"
         track_url = (
             f"https://livetrack.garmin.com/api/sessions/{self.session_id}/track-points/common"
         )
-        course_url = f"https://livetrack.garmin.com/api/sessions/{self.session_id}/courses"
+        course_url = f"https://livetrack.garmin.com/api/v1/sessions/{self.session_id}/courses"
         try:
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True)

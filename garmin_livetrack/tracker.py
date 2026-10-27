@@ -3,6 +3,7 @@ URL, plus TrackerManager for keeping track of all active sessions.
 """
 
 import copy
+import math
 import os
 import queue
 import re
@@ -100,6 +101,33 @@ def is_live(session: Dict[str, Any]) -> bool:
         )
     except ValueError:
         return True
+
+
+def _timestamp_ms(value: Optional[str]) -> Optional[int]:
+    if not value:
+        return None
+    try:
+        return int(
+            datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000
+        )
+    except ValueError:
+        return None
+
+
+def _distance_meters(a: Dict[str, Any], b: Dict[str, Any]) -> float:
+    lat1, lon1 = a.get("latitude"), a.get("longitude")
+    lat2, lon2 = b.get("latitude"), b.get("longitude")
+    if None in (lat1, lon1, lat2, lon2):
+        return 0.0
+    radius = 6_371_000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+    h = (
+        math.sin(d_phi / 2) ** 2
+        + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
+    )
+    return 2 * radius * math.asin(math.sqrt(min(1.0, h)))
 
 
 class Tracker:
@@ -355,7 +383,30 @@ class Tracker:
                 )
             ]
             if new_points:
-                self.track.extend(new_points)
+                # Garmin's track-point payload no longer includes running
+                # distance/duration totals, so derive them when absent. The
+                # viewer hides a chip whose metadata value is null.
+                start_ms = _timestamp_ms(self.track_begin)
+                for point in new_points:
+                    meta = point["metaData"]
+                    if meta.get("TOTAL_DISTANCE") is None:
+                        if self.track:
+                            previous = self.track[-1]
+                            meta["TOTAL_DISTANCE"] = (
+                                previous["metaData"].get("TOTAL_DISTANCE") or 0.0
+                            ) + _distance_meters(previous, point)
+                        else:
+                            meta["TOTAL_DISTANCE"] = 0.0
+                    if meta.get("TOTAL_DURATION") is None:
+                        started = start_ms
+                        if started is None and self.track:
+                            started = self.track[0]["timestamp"]
+                        meta["TOTAL_DURATION"] = (
+                            max(0, int((point["timestamp"] - started) / 1000))
+                            if started is not None
+                            else 0
+                        )
+                    self.track.append(point)
                 self.last_timestamp = new_points[-1]["timestamp"]
                 point = new_points[-1]
                 print(

@@ -1497,6 +1497,8 @@ class _ProfileAvatar extends StatelessWidget {
   final bool ended;
 
   static const _diameter = 40.0;
+  // A zero-saturation source desaturates the image to grayscale.
+  static const _grayscale = ColorFilter.mode(Colors.grey, BlendMode.saturation);
 
   @override
   Widget build(BuildContext context) {
@@ -1514,20 +1516,22 @@ class _ProfileAvatar extends StatelessWidget {
         child: fallbackIcon,
       );
     }
+    final image = Image.network(
+      url,
+      fit: BoxFit.cover,
+      errorBuilder: (context, error, stackTrace) => Center(child: fallbackIcon),
+      loadingBuilder: (context, child, progress) =>
+          progress == null ? child : Center(child: fallbackIcon),
+    );
     return ClipOval(
       child: SizedBox(
         width: _diameter,
         height: _diameter,
         child: ColoredBox(
           color: backgroundColor,
-          child: Image.network(
-            url,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) =>
-                Center(child: fallbackIcon),
-            loadingBuilder: (context, child, progress) =>
-                progress == null ? child : Center(child: fallbackIcon),
-          ),
+          child: ended
+              ? ColorFiltered(colorFilter: _grayscale, child: image)
+              : image,
         ),
       ),
     );

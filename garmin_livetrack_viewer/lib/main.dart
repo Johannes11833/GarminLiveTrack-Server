@@ -1519,6 +1519,15 @@ class _ProfileAvatar extends StatelessWidget {
     final image = Image.network(
       url,
       fit: BoxFit.cover,
+      // Only desaturate an actual loaded photo. Applying the filter around the
+      // whole Image widget also hit its loading/error fallback, turning the
+      // default biker icon into a grey box for ended sessions without a photo.
+      frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+        if (frame == null) return Center(child: fallbackIcon);
+        return ended
+            ? ColorFiltered(colorFilter: _grayscale, child: child)
+            : child;
+      },
       errorBuilder: (context, error, stackTrace) => Center(child: fallbackIcon),
       loadingBuilder: (context, child, progress) =>
           progress == null ? child : Center(child: fallbackIcon),
@@ -1527,12 +1536,7 @@ class _ProfileAvatar extends StatelessWidget {
       child: SizedBox(
         width: _diameter,
         height: _diameter,
-        child: ColoredBox(
-          color: backgroundColor,
-          child: ended
-              ? ColorFiltered(colorFilter: _grayscale, child: image)
-              : image,
-        ),
+        child: ColoredBox(color: backgroundColor, child: image),
       ),
     );
   }

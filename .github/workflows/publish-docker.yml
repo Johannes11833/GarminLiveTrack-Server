@@ -77,3 +77,7 @@ jobs:
           tags: |
             ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:latest
             ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:${{ needs.version.outputs.version }}
+          # Reuse layers from the previous build. mode=max also caches the
+          # intermediate Poetry and Flutter builder stages.
+          cache-from: type=registry,ref=ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:buildcache,mode=max

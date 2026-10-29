@@ -15,7 +15,7 @@ permissions:
 jobs:
   lint:
     name: Validate PR title
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     steps:
       - name: Check Conventional Commits format
         id: lint

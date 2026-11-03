@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:developer';
+import 'dart:math' as math;
 
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/gestures.dart';
@@ -1556,16 +1557,19 @@ class _MetricChart extends StatelessWidget {
       for (final sample in samples)
         FlSpot(sample.$1.difference(start).inSeconds.toDouble(), sample.$2),
     ];
-    final values = samples.map((sample) => sample.$2);
-    final minY =
-        ((values.reduce((a, b) => a < b ? a : b) - 10) / 10).floorToDouble() *
-        10;
-    final maxY =
-        ((values.reduce((a, b) => a > b ? a : b) + 10) / 10).ceilToDouble() *
-        10;
-    final yInterval = ((maxY - minY) / 3).clamp(10, double.infinity).toDouble();
+    final minSpot = spots.reduce((a, b) => b.y < a.y ? b : a);
+    final maxSpot = spots.reduce((a, b) => b.y > a.y ? b : a);
+    final mean = _timeWeightedMean(spots);
+    // Pad relative to the data's own spread so narrow series (e.g. speed)
+    // still fill the chart; a flat series gets a small fixed margin.
+    final range = maxSpot.y - minSpot.y;
+    final pad = range > 0 ? range * 0.2 : math.max(maxSpot.y.abs() * 0.1, 1);
+    final yInterval = _niceStep((range + 2 * pad) / 3);
+    var minY = ((minSpot.y - pad) / yInterval).floorToDouble() * yInterval;
+    if (minSpot.y >= 0 && minY < 0) minY = 0;
+    final maxY = ((maxSpot.y + pad) / yInterval).ceilToDouble() * yInterval;
     final xInterval = (spots.last.x / 5).clamp(1, double.infinity).toDouble();
-    return SizedBox(
+    final chart = SizedBox(
       height: height,
       child: LineChart(
         LineChartData(
@@ -1573,6 +1577,16 @@ class _MetricChart extends StatelessWidget {
           maxY: maxY,
           gridData: const FlGridData(show: true, drawVerticalLine: false),
           borderData: FlBorderData(show: false),
+          extraLinesData: ExtraLinesData(
+            horizontalLines: [
+              HorizontalLine(
+                y: mean,
+                color: series.color.withValues(alpha: 0.6),
+                strokeWidth: 1,
+                dashArray: const [4, 4],
+              ),
+            ],
+          ),
           titlesData: FlTitlesData(
             topTitles: const AxisTitles(
               sideTitles: SideTitles(showTitles: false),
@@ -1614,14 +1628,18 @@ class _MetricChart extends StatelessWidget {
               // Keep the tooltip inside the chart horizontally, but let it
               // float above high points vertically, as it does on desktop.
               fitInsideHorizontally: true,
-              getTooltipItems: (touchedSpots) => touchedSpots
-                  .map(
-                    (spot) => LineTooltipItem(
-                      '${spot.y.toStringAsFixed(0)} ${series.unit}',
-                      const TextStyle(color: Colors.white),
-                    ),
-                  )
-                  .toList(),
+              getTooltipItems: (touchedSpots) => touchedSpots.map((spot) {
+                // Name the extremes, since their dots carry no label.
+                final prefix = spot.x == maxSpot.x && spot.y == maxSpot.y
+                    ? 'max '
+                    : spot.x == minSpot.x && spot.y == minSpot.y
+                    ? 'min '
+                    : '';
+                return LineTooltipItem(
+                  '$prefix${spot.y.toStringAsFixed(0)} ${series.unit}',
+                  const TextStyle(color: Colors.white),
+                );
+              }).toList(),
             ),
           ),
           lineBarsData: [
@@ -1640,6 +1658,80 @@ class _MetricChart extends StatelessWidget {
         ),
       ),
     );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        chart,
+        const SizedBox(height: 4),
+        _statsRow(context, minSpot.y, mean, maxSpot.y),
+      ],
+    );
+  }
+
+  Widget _statsRow(BuildContext context, double min, double mean, double max) {
+    final textTheme = Theme.of(context).textTheme;
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    InlineSpan stat(String name, double value) => TextSpan(
+      children: [
+        TextSpan(
+          text: '$name ',
+          style: TextStyle(color: muted),
+        ),
+        TextSpan(
+          text: value.toStringAsFixed(0),
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+      ],
+    );
+    const separator = TextSpan(text: '  ·  ');
+    return Text.rich(
+      TextSpan(
+        children: [
+          stat('min', min),
+          separator,
+          stat('avg', mean),
+          separator,
+          stat('max', max),
+          TextSpan(
+            text: ' ${series.unit}',
+            style: TextStyle(color: muted),
+          ),
+        ],
+      ),
+      textAlign: TextAlign.center,
+      style: textTheme.bodySmall,
+    );
+  }
+
+  /// Rounds [raw] to the nearest 1, 2 or 5 times a power of ten, so axis
+  /// labels land on round values. Never below 1, as labels are integers.
+  static double _niceStep(double raw) {
+    if (raw <= 1) return 1;
+    final magnitude = math.pow(10, (math.log(raw) / math.ln10).floor());
+    final normalized = raw / magnitude;
+    final factor = normalized < 1.5
+        ? 1
+        : normalized < 3.5
+        ? 2
+        : normalized < 7.5
+        ? 5
+        : 10;
+    return (factor * magnitude).toDouble();
+  }
+
+  /// Averages [spots] over time (trapezoidal), so bursts of dense samples
+  /// don't outweigh sparse stretches. Falls back to a plain mean when all
+  /// samples share one timestamp.
+  static double _timeWeightedMean(List<FlSpot> spots) {
+    final duration = spots.last.x - spots.first.x;
+    if (duration <= 0) {
+      return spots.map((s) => s.y).reduce((a, b) => a + b) / spots.length;
+    }
+    var area = 0.0;
+    for (var i = 1; i < spots.length; i++) {
+      area += (spots[i].x - spots[i - 1].x) * (spots[i].y + spots[i - 1].y) / 2;
+    }
+    return area / duration;
   }
 }
 

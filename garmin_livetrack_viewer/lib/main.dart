@@ -20,6 +20,12 @@ import 'push_service.dart';
 //   flutter run -d chrome --dart-define=API_BASE_URL=http://127.0.0.1:8000
 const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
+// Session to show when the URL names none, so a debug launch opens straight
+// onto the API's dummy session (see .vscode/launch.json). Empty in release
+// builds, where the session always comes from the URL or the last one seen.
+const _debugSessionId = String.fromEnvironment('DEBUG_SESSION_ID');
+const _debugSessionToken = String.fromEnvironment('DEBUG_SESSION_TOKEN');
+
 const _senderNameStorageKey = 'livetrack_sender_name';
 const _pushTokenStorageKey = 'livetrack_push_token';
 const _lastSessionIdStorageKey = 'livetrack_last_session_id';
@@ -438,6 +444,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       _saveSessionId(idParam);
       return idParam;
     }
+    if (_debugSessionId.isNotEmpty) return _debugSessionId;
     return _loadSavedSessionId();
   }
 
@@ -450,6 +457,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       _saveSessionToken(tokenParam);
       return tokenParam;
     }
+    if (_debugSessionToken.isNotEmpty) return _debugSessionToken;
     return _loadSavedSessionToken();
   }
 

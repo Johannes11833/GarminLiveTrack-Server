@@ -37,6 +37,10 @@ DUMMY_MODE_ENABLED = os.getenv("LIVETRACK_ENABLE_DUMMY_MODE", "").lower() in {
     "true",
     "yes",
 }
+# Optional fixed id/token for the dummy session, so a debug viewer can be
+# launched pointing at it (see .vscode/launch.json). Random when unset.
+DUMMY_SESSION_ID = os.getenv("LIVETRACK_DUMMY_SESSION_ID", "").strip() or None
+DUMMY_SESSION_TOKEN = os.getenv("LIVETRACK_DUMMY_SESSION_TOKEN", "").strip() or None
 
 
 @limiter.shared_limit("20/minute", scope="api_token_guess")
@@ -80,7 +84,7 @@ manager.start_cleanup()
 
 
 def _start_dummy_session() -> None:
-    tracker = manager.start_dummy()
+    tracker = manager.start_dummy(DUMMY_SESSION_ID, DUMMY_SESSION_TOKEN)
     print(
         f"[dummy] Started simulated session: id={tracker.session_id} "
         f"token={tracker.token}\n"

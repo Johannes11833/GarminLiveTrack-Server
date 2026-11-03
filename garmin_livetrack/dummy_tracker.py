@@ -7,7 +7,7 @@ import random
 import secrets
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from garmin_livetrack.tracker import Tracker
 
@@ -20,9 +20,11 @@ class DummyTracker(Tracker):
     POLL_SECONDS = 2
     START_LAT, START_LON = 48.7758, 9.1829  # Stuttgart
 
-    def __init__(self):
-        session_id = str(uuid.uuid4())
-        token = secrets.token_hex(16)
+    def __init__(self, session_id: Optional[str] = None, token: Optional[str] = None):
+        # Fixed values let a debug viewer point at the session up front;
+        # otherwise every run gets a fresh one.
+        session_id = session_id or str(uuid.uuid4())
+        token = token or secrets.token_hex(16)
         super().__init__(
             f"https://livetrack.garmin.com/session/{session_id}/token/{token}"
         )

@@ -513,12 +513,14 @@ class TrackerManager:
         tracker.start()
         return tracker
 
-    def start_dummy(self) -> Tracker:
+    def start_dummy(
+        self, session_id: Optional[str] = None, token: Optional[str] = None
+    ) -> Tracker:
         # Imported lazily: dummy_tracker.py imports Tracker from this module,
         # so importing it back here at module load time would be circular.
         from garmin_livetrack.dummy_tracker import DummyTracker
 
-        tracker = DummyTracker()
+        tracker = DummyTracker(session_id, token)
         with self.lock:
             self.trackers[tracker.session_id] = tracker
         tracker.start()

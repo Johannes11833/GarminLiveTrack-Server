@@ -195,16 +195,18 @@ enum _BaseMap {
   };
 }
 
-// Source layers that paint ground cover (water, parks, buildings, ...). The
-// hybrid overlay drops their fills and outlines (and every fill/raster
-// layer) so the imagery shows through, keeping roads, boundaries and all
-// labels on top of it.
+// Source layers whose lines would sit on top of features the imagery already
+// shows (water, parks, buildings, rivers, runways). The hybrid overlay drops
+// them, along with every fill/raster layer, so the photo shows through,
+// keeping only roads, boundaries and labels.
 const _hybridHiddenSourceLayers = {
+  'aeroway',
   'building',
   'landcover',
   'landuse',
   'park',
   'water',
+  'waterway',
 };
 
 /// Fallback hybrid overlay when the style JSON cannot be fetched for
@@ -220,10 +222,6 @@ vt.Theme _filteredHybridTheme(vt.Theme theme) => vt.Theme(
   ],
 );
 
-// Bumped whenever _hybridStyleJson changes: the theme id keys the
-// finished-tile cache, which must not serve tiles of an older tuning.
-const _hybridStyleRevision = 1;
-
 List<Object> _zoomRamp(List<num> stops) => [
   'interpolate',
   ['exponential', 1.2],
@@ -231,32 +229,78 @@ List<Object> _zoomRamp(List<num> stops) => [
   ...stops,
 ];
 
-/// [stops] (zoom, width pairs) with [extra] px added to every width.
-List<num> _widened(List<num> stops, num extra) => [
-  for (var i = 0; i < stops.length; i += 2) ...[stops[i], stops[i + 1] + extra],
-];
-
-// Small roads of the Liberty style, retuned for imagery. Keyed by the layer
-// id with its road_/bridge_/tunnel_ prefix and _casing suffix stripped. The
-// plain map shows them late and as faint grey lines that only read on its
-// light background; over photos they need to start earlier, be wider and
-// sit on a dark casing.
-const _hybridRoadTuning = {
-  'minor': (minzoom: 12, fill: [12, 0.8, 14, 2.5, 20, 18]),
-  'street': (minzoom: 12, fill: [12, 0.8, 14, 2.5, 20, 18]),
-  'service_track': (minzoom: 13, fill: [13, 0.6, 15, 1.5, 20, 7.5]),
-  'path_pedestrian': (minzoom: 13, fill: [13, 1, 15, 2, 20, 10]),
+// Road look over imagery, keyed by Liberty's road class: the layer id with
+// its road_/bridge_/tunnel_ prefix stripped. Thin, semi-transparent lines
+// with no casings, so roads trace the photo instead of covering it:
+// highways in yellow, everything else in white. Major roads are opaque:
+// the renderer paints every feature separately, so translucent lines get
+// darker wherever features overlap, e.g. a road mapped as two carriageways
+// looks solid zoomed out while its single-carriageway parts look faint.
+// Small roads stay translucent; they are rarely split that way. `width` is a
+// list of zoom/width pairs. Classes not listed (and all casings and rail
+// hatching) are dropped.
+const _hybridRoads = {
+  'motorway': (
+    minzoom: 5,
+    color: '#f5c04a',
+    width: [5, 0.5, 10, 1.5, 14, 3, 18, 8, 20, 12],
+  ),
+  'motorway_link': (
+    minzoom: 12,
+    color: '#f5c04a',
+    width: [12, 0.5, 14, 1.5, 18, 5, 20, 8],
+  ),
+  'trunk_primary': (
+    minzoom: 7,
+    color: '#f2d27a',
+    width: [7, 0.4, 10, 1, 14, 2.5, 18, 7, 20, 10],
+  ),
+  'secondary_tertiary': (
+    minzoom: 9,
+    color: '#ececec',
+    width: [9, 0.3, 12, 1, 14, 2, 18, 6, 20, 9],
+  ),
+  'link': (
+    minzoom: 13,
+    color: 'rgba(255,255,255,0.7)',
+    width: [13, 0.5, 14, 1.2, 18, 4, 20, 6],
+  ),
+  'minor': (
+    minzoom: 13,
+    color: 'rgba(255,255,255,0.6)',
+    width: [13, 0.4, 14, 1, 16, 2, 18, 4, 20, 8],
+  ),
+  'street': (
+    minzoom: 13,
+    color: 'rgba(255,255,255,0.6)',
+    width: [13, 0.4, 14, 1, 16, 2, 18, 4, 20, 8],
+  ),
+  'service_track': (
+    minzoom: 14,
+    color: 'rgba(255,255,255,0.45)',
+    width: [14, 0.4, 16, 1, 18, 2, 20, 4],
+  ),
+  'path_pedestrian': (
+    minzoom: 14,
+    color: 'rgba(255,255,255,0.65)',
+    width: [14, 0.6, 16, 1, 18, 1.5, 20, 3],
+  ),
+  'major_rail': (
+    minzoom: 12,
+    color: 'rgba(220,220,220,0.5)',
+    width: [12, 0.4, 16, 1, 20, 2],
+  ),
+  'transit_rail': (
+    minzoom: 13,
+    color: 'rgba(220,220,220,0.4)',
+    width: [13, 0.4, 16, 0.8, 20, 1.5],
+  ),
 };
-
-// Trails are what most activities follow, so they get their own colour
-// instead of the white used for streets.
-const _hybridPathColor = '#ffd54f';
-const _hybridCasingColor = 'rgba(0,0,0,0.5)';
 
 /// Rewrites the Liberty style [style] (decoded JSON) into an overlay for
 /// satellite imagery: drops backgrounds, fills, rasters and ground-cover
-/// lines, makes small roads and paths visible from lower zooms with dark
-/// casings, and switches labels to light text on a dark halo.
+/// lines, draws roads as thin translucent lines without casings, and
+/// switches labels to white text on a thin dark halo.
 Map<String, Object?> _hybridStyleJson(Map<String, Object?> style) {
   final layers = <Map<String, Object?>>[];
   for (final raw in style['layers'] as List? ?? const []) {
@@ -275,60 +319,38 @@ Map<String, Object?> _hybridStyleJson(Map<String, Object?> style) {
     }
 
     if (type == 'line' && sourceLayer == 'transportation') {
-      final isCasing = id.endsWith('_casing');
-      final roadClass = id
-          .replaceFirst(RegExp(r'^(road|bridge|tunnel)_'), '')
-          .replaceFirst(RegExp(r'_casing$'), '');
-      final tuning = _hybridRoadTuning[roadClass];
-      if (tuning != null) {
-        layer['minzoom'] = tuning.minzoom;
-        final fill = tuning.fill;
-        if (isCasing) {
-          // Casing = fill plus ~1.5px of dark edge on each side.
-          paint['line-width'] = _zoomRamp(_widened(fill, 3));
-          paint['line-color'] = _hybridCasingColor;
-          paint.remove('line-opacity');
-        } else {
-          paint['line-width'] = _zoomRamp(fill);
-          paint['line-color'] = roadClass == 'path_pedestrian'
-              ? _hybridPathColor
-              : '#ffffff';
-        }
-      } else if (isCasing) {
-        // Major roads keep their colours; a dark casing separates them
-        // from bright ground (fields, sand, snow) better than orange.
-        paint['line-color'] = _hybridCasingColor;
+      final road =
+          _hybridRoads[id.replaceFirst(RegExp(r'^(road|bridge|tunnel)_'), '')];
+      if (road == null) continue; // casings, rail hatching, unknown classes
+      layer['minzoom'] = road.minzoom;
+      paint['line-color'] = road.color;
+      paint['line-width'] = _zoomRamp(road.width);
+      // Tunnels are underground: show them, but fainter.
+      if (id.startsWith('tunnel_')) {
+        paint['line-opacity'] = 0.55;
+      } else {
+        paint.remove('line-opacity');
       }
+      if (id.contains('path_pedestrian')) {
+        paint['line-dasharray'] = [2, 1.5];
+      } else {
+        paint.remove('line-dasharray');
+      }
+    }
+
+    if (type == 'line' && sourceLayer == 'boundary') {
+      paint['line-color'] = 'rgba(255,255,255,0.6)';
     }
 
     if (type == 'symbol' && paint.containsKey('text-color')) {
       final isWater = sourceLayer == 'water_name' || sourceLayer == 'waterway';
-      paint['text-color'] = isWater ? '#bfe0ff' : '#ffffff';
-      paint['text-halo-color'] = 'rgba(0,0,0,0.8)';
-      paint['text-halo-width'] = 1.5;
-      paint['text-halo-blur'] = 0.5;
-      // Street and trail names appear from z15+ on the plain map; on
-      // imagery they are the main way to tell streets apart.
-      if (id == 'highway-name-minor' || id == 'highway-name-path') {
-        layer['minzoom'] = 14;
-      }
+      paint['text-color'] = isWater ? '#cfe6ff' : '#ffffff';
+      paint['text-halo-color'] = 'rgba(0,0,0,0.75)';
+      paint['text-halo-width'] = 1.2;
+      paint['text-halo-blur'] = 0.3;
     }
 
     layer['paint'] = paint;
-    // Ground-level paths have no casing in Liberty; give them one (drawn
-    // first, so below) so the dashed trail stays visible on bright ground.
-    if (id == 'road_path_pedestrian' || id == 'tunnel_path_pedestrian') {
-      final fill = _hybridRoadTuning['path_pedestrian']!.fill;
-      layers.add({
-        ...layer,
-        'id': '${id}_hybrid_casing',
-        'layout': {'line-join': 'round', 'line-cap': 'round'},
-        'paint': {
-          'line-color': _hybridCasingColor,
-          'line-width': _zoomRamp(_widened(fill, 2)),
-        },
-      });
-    }
     layers.add(layer);
   }
   return {...style, 'layers': layers};
@@ -343,7 +365,9 @@ Future<vt.Theme> _loadHybridTheme(vt.Theme fallbackFrom) async {
     final style = (jsonDecode(response.body) as Map).cast<String, Object?>();
     return const vt.ThemeReader(logger: vt.Logger.console()).read(
       _hybridStyleJson(style),
-      id: '${fallbackFrom.id}-hybrid-r$_hybridStyleRevision',
+      // Must differ from the plain theme's id, which keys the (in-memory)
+      // finished-tile cache shared by both modes.
+      id: '${fallbackFrom.id}-hybrid',
     );
   } catch (error) {
     log('Failed to build hybrid style, using filtered fallback: $error');

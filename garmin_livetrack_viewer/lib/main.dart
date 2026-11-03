@@ -30,6 +30,7 @@ const _senderNameStorageKey = 'livetrack_sender_name';
 const _pushTokenStorageKey = 'livetrack_push_token';
 const _lastSessionIdStorageKey = 'livetrack_last_session_id';
 const _lastSessionTokenStorageKey = 'livetrack_last_session_token';
+const _baseMapStorageKey = 'livetrack_base_map';
 
 class _ApiException implements Exception {
   const _ApiException(this.statusCode);
@@ -96,6 +97,21 @@ void _saveSessionToken(String token) {
   } catch (_) {}
 }
 
+_BaseMap _loadSavedBaseMap() {
+  try {
+    final saved = web.window.localStorage.getItem(_baseMapStorageKey);
+    return _BaseMap.values.asNameMap()[saved] ?? _BaseMap.map;
+  } catch (_) {
+    return _BaseMap.map;
+  }
+}
+
+void _saveBaseMap(_BaseMap baseMap) {
+  try {
+    web.window.localStorage.setItem(_baseMapStorageKey, baseMap.name);
+  } catch (_) {}
+}
+
 void _clearSessionCache(String? sessionId) {
   if (sessionId == null) return;
   try {
@@ -151,6 +167,15 @@ const _compactWidthBreakpoint = 600.0;
 
 // Vector basemap: OpenFreeMap (free, no key).
 const vectorStyleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+
+// Satellite basemap: Esri World Imagery raster tiles (free, no key; its terms
+// require the attribution below to stay visible while it is shown).
+const satelliteTileUrl =
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const satelliteAttribution =
+    'Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community';
+
+enum _BaseMap { map, satellite }
 
 String _twoDigits(int n) => n.toString().padLeft(2, '0');
 
@@ -256,6 +281,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
   DateTime? _lastUpdate;
   String? _trackerState;
   vt.Style? _vectorStyle;
+  _BaseMap _baseMap = _loadSavedBaseMap();
   PushService? _pushService;
   String _appVersion = '';
 
@@ -376,6 +402,14 @@ class _LiveTrackPageState extends State<LiveTrackPage>
     } catch (error) {
       log('Failed to load vector style: $error');
     }
+  }
+
+  void _toggleBaseMap() {
+    final next = _baseMap == _BaseMap.satellite
+        ? _BaseMap.map
+        : _BaseMap.satellite;
+    _saveBaseMap(next);
+    setState(() => _baseMap = next);
   }
 
   Future<void> _loadAppVersion() async {
@@ -815,7 +849,14 @@ class _LiveTrackPageState extends State<LiveTrackPage>
                     },
                   ),
                   children: [
-                    if (_vectorStyle != null)
+                    if (_baseMap == _BaseMap.satellite)
+                      TileLayer(
+                        urlTemplate: satelliteTileUrl,
+                        // Imagery is patchy beyond z18 outside cities; upscale
+                        // z18 tiles rather than show "no data" placeholders.
+                        maxNativeZoom: 18,
+                      )
+                    else if (_vectorStyle != null)
                       vt.VectorTileLayer(
                         theme: _vectorStyle!.theme,
                         tileProviders: _vectorStyle!.providers,
@@ -965,15 +1006,37 @@ class _LiveTrackPageState extends State<LiveTrackPage>
                         onPressed: () => _zoomBy(-1),
                         child: const Icon(Icons.remove),
                       ),
+                      const SizedBox(height: 8),
+                      FloatingActionButton.small(
+                        heroTag: 'baseMap',
+                        backgroundColor: buttonColor,
+                        foregroundColor: buttonIconColor,
+                        tooltip: _baseMap == _BaseMap.satellite
+                            ? 'Show map'
+                            : 'Show satellite',
+                        onPressed: _toggleBaseMap,
+                        // Shows the layer a tap switches to.
+                        child: Icon(
+                          _baseMap == _BaseMap.satellite
+                              ? Icons.map
+                              : Icons.satellite_alt,
+                        ),
+                      ),
                     ],
                   ),
                 ),
                 Positioned(
+                  // Both edges pinned so the longer satellite credit wraps
+                  // instead of running off narrow screens.
+                  left: 4,
                   right: 4,
                   bottom: 2,
                   child: IgnorePointer(
                     child: Text(
-                      'v$_appVersion',
+                      _baseMap == _BaseMap.satellite
+                          ? '$satelliteAttribution · v$_appVersion'
+                          : 'v$_appVersion',
+                      textAlign: TextAlign.end,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
                         color: Theme.of(context).colorScheme.onSurface
                             .withValues(alpha: 0.4),

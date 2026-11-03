@@ -203,6 +203,13 @@ The API logs the session id and token it started, e.g.:
 [dummy] Open the viewer with: ?id=<id>&sessionToken=<token>
 ```
 
+The id and token are random unless `LIVETRACK_DUMMY_SESSION_ID` and
+`LIVETRACK_DUMMY_SESSION_TOKEN` are set. The viewer accepts matching
+`--dart-define=DEBUG_SESSION_ID=...` / `DEBUG_SESSION_TOKEN=...` as a fallback
+when the URL names no session. `.vscode/launch.json` sets both sides to the
+same values; its **API + Viewer (dummy session)** compound starts the API and
+the viewer together, and the viewer shows the route as soon as the session is up.
+
 - `GET /trackings` lists all tracking sessions (also requires the API token).
 - `GET /trackings/{session_id}/token/{token}` returns a session's status and counts.
 - `GET /trackings/{session_id}/token/{token}/track` returns accumulated track points.

@@ -2,6 +2,10 @@
     // Use IntelliSense to learn about possible attributes.
     // Hover to view descriptions of existing attributes.
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    //
+    // The dummy session id/token below must match between the API config
+    // (LIVETRACK_DUMMY_SESSION_*) and the Flutter configs (DEBUG_SESSION_*),
+    // so the viewer opens straight onto the API's simulated session.
     "version": "0.2.0",
     "configurations": [
         {
@@ -11,7 +15,9 @@
             "program": "garmin_livetrack_viewer/lib/main.dart",
             "deviceId": "chrome",
             "args": [
-                "--dart-define=API_BASE_URL=http://127.0.0.1:8000"
+                "--dart-define=API_BASE_URL=http://127.0.0.1:8000",
+                "--dart-define=DEBUG_SESSION_ID=d0d0d0d0-0000-4000-8000-000000000001",
+                "--dart-define=DEBUG_SESSION_TOKEN=debugtoken"
             ]
         },
         {
@@ -26,6 +32,8 @@
                 "--web-port",
                 "8080",
                 "--dart-define=API_BASE_URL=http://localhost:8000",
+                "--dart-define=DEBUG_SESSION_ID=d0d0d0d0-0000-4000-8000-000000000001",
+                "--dart-define=DEBUG_SESSION_TOKEN=debugtoken",
             ]
         },
         {
@@ -35,8 +43,22 @@
             "program": "garmin_livetrack/livetrack_api.py",
             "console": "integratedTerminal",
             "env": {
-                "LIVETRACK_ENABLE_DUMMY_MODE": "yes"
+                "LIVETRACK_ENABLE_DUMMY_MODE": "yes",
+                "LIVETRACK_DUMMY_SESSION_ID": "d0d0d0d0-0000-4000-8000-000000000001",
+                "LIVETRACK_DUMMY_SESSION_TOKEN": "debugtoken"
             }
+        }
+    ],
+    "compounds": [
+        {
+            // Starts both; the viewer polls every 5s, so it picks up the
+            // dummy session once the API has started it (~5s after boot).
+            "name": "API + Viewer (dummy session)",
+            "configurations": [
+                "Python Debugger: livetrack_api.py",
+                "Flutter (chrome)"
+            ],
+            "stopAll": true
         }
     ]
 }

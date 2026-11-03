@@ -457,6 +457,7 @@ class Tracker:
                     with self.lock:
                         self._mark_state("running")
                 except RuntimeError as error:
+                    print(f"[{self.session_id}] tracker error: {error}")
                     with self.lock:
                         self.error = str(error)
                         self._mark_state("error")
@@ -464,6 +465,7 @@ class Tracker:
                 self._wake.wait(POLL_SECONDS)
                 self._wake.clear()
         except Exception as error:
+            print(f"[{self.session_id}] tracker error: {error}")
             with self.lock:
                 self.error = str(error)
                 self._mark_state("error")

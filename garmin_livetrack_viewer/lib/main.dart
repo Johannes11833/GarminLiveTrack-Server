@@ -30,6 +30,7 @@ const _senderNameStorageKey = 'livetrack_sender_name';
 const _pushTokenStorageKey = 'livetrack_push_token';
 const _lastSessionIdStorageKey = 'livetrack_last_session_id';
 const _lastSessionTokenStorageKey = 'livetrack_last_session_token';
+const _baseMapStorageKey = 'livetrack_base_map';
 
 class _ApiException implements Exception {
   const _ApiException(this.statusCode);
@@ -96,6 +97,21 @@ void _saveSessionToken(String token) {
   } catch (_) {}
 }
 
+_BaseMap _loadSavedBaseMap() {
+  try {
+    final saved = web.window.localStorage.getItem(_baseMapStorageKey);
+    return _BaseMap.values.asNameMap()[saved] ?? _BaseMap.map;
+  } catch (_) {
+    return _BaseMap.map;
+  }
+}
+
+void _saveBaseMap(_BaseMap baseMap) {
+  try {
+    web.window.localStorage.setItem(_baseMapStorageKey, baseMap.name);
+  } catch (_) {}
+}
+
 void _clearSessionCache(String? sessionId) {
   if (sessionId == null) return;
   try {
@@ -151,6 +167,213 @@ const _compactWidthBreakpoint = 600.0;
 
 // Vector basemap: OpenFreeMap (free, no key).
 const vectorStyleUrl = 'https://tiles.openfreemap.org/styles/liberty';
+
+// Satellite basemap: Esri World Imagery raster tiles (free, no key; its terms
+// require the attribution below to stay visible while it is shown).
+const satelliteTileUrl =
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+const satelliteAttribution =
+    'Imagery © Esri, Maxar, Earthstar Geographics, and the GIS User Community';
+
+enum _BaseMap {
+  map,
+  satellite,
+  hybrid;
+
+  bool get showsImagery => this != _BaseMap.map;
+
+  String get label => switch (this) {
+    _BaseMap.map => 'Map',
+    _BaseMap.satellite => 'Satellite',
+    _BaseMap.hybrid => 'Hybrid',
+  };
+
+  IconData get icon => switch (this) {
+    _BaseMap.map => Icons.map,
+    _BaseMap.satellite => Icons.satellite_alt,
+    _BaseMap.hybrid => Icons.layers,
+  };
+}
+
+// Source layers whose lines would sit on top of features the imagery already
+// shows (water, parks, buildings, rivers, runways). The hybrid overlay drops
+// them, along with every fill/raster layer, so the photo shows through,
+// keeping only roads, boundaries and labels.
+const _hybridHiddenSourceLayers = {
+  'aeroway',
+  'building',
+  'landcover',
+  'landuse',
+  'park',
+  'water',
+  'waterway',
+};
+
+/// Fallback hybrid overlay when the style JSON cannot be fetched for
+/// [_hybridStyleJson]: the plain style minus everything that hides imagery.
+vt.Theme _filteredHybridTheme(vt.Theme theme) => vt.Theme(
+  id: '${theme.id}-hybrid',
+  layers: [
+    for (final layer in theme.layers)
+      if (layer is vt.SymbolThemeLayer ||
+          ((layer is vt.LineThemeLayer || layer is vt.CircleThemeLayer) &&
+              !_hybridHiddenSourceLayers.contains(layer.sourceLayer)))
+        layer,
+  ],
+);
+
+List<Object> _zoomRamp(List<num> stops) => [
+  'interpolate',
+  ['exponential', 1.2],
+  ['zoom'],
+  ...stops,
+];
+
+// Road look over imagery, keyed by Liberty's road class: the layer id with
+// its road_/bridge_/tunnel_ prefix stripped. Thin, semi-transparent lines
+// with no casings, so roads trace the photo instead of covering it:
+// highways in yellow, everything else in white. Major roads are opaque:
+// the renderer paints every feature separately, so translucent lines get
+// darker wherever features overlap, e.g. a road mapped as two carriageways
+// looks solid zoomed out while its single-carriageway parts look faint.
+// Small roads stay translucent; they are rarely split that way. `width` is a
+// list of zoom/width pairs. Classes not listed (and all casings and rail
+// hatching) are dropped.
+const _hybridRoads = {
+  'motorway': (
+    minzoom: 5,
+    color: '#f5c04a',
+    width: [5, 0.5, 10, 1.5, 14, 3, 18, 8, 20, 12],
+  ),
+  'motorway_link': (
+    minzoom: 12,
+    color: '#f5c04a',
+    width: [12, 0.5, 14, 1.5, 18, 5, 20, 8],
+  ),
+  'trunk_primary': (
+    minzoom: 7,
+    color: '#f2d27a',
+    width: [7, 0.4, 10, 1, 14, 2.5, 18, 7, 20, 10],
+  ),
+  'secondary_tertiary': (
+    minzoom: 9,
+    color: '#ececec',
+    width: [9, 0.3, 12, 1, 14, 2, 18, 6, 20, 9],
+  ),
+  'link': (
+    minzoom: 13,
+    color: 'rgba(255,255,255,0.7)',
+    width: [13, 0.5, 14, 1.2, 18, 4, 20, 6],
+  ),
+  'minor': (
+    minzoom: 13,
+    color: 'rgba(255,255,255,0.6)',
+    width: [13, 0.4, 14, 1, 16, 2, 18, 4, 20, 8],
+  ),
+  'street': (
+    minzoom: 13,
+    color: 'rgba(255,255,255,0.6)',
+    width: [13, 0.4, 14, 1, 16, 2, 18, 4, 20, 8],
+  ),
+  'service_track': (
+    minzoom: 14,
+    color: 'rgba(255,255,255,0.45)',
+    width: [14, 0.4, 16, 1, 18, 2, 20, 4],
+  ),
+  'path_pedestrian': (
+    minzoom: 14,
+    color: 'rgba(255,255,255,0.65)',
+    width: [14, 0.6, 16, 1, 18, 1.5, 20, 3],
+  ),
+  'major_rail': (
+    minzoom: 12,
+    color: 'rgba(220,220,220,0.5)',
+    width: [12, 0.4, 16, 1, 20, 2],
+  ),
+  'transit_rail': (
+    minzoom: 13,
+    color: 'rgba(220,220,220,0.4)',
+    width: [13, 0.4, 16, 0.8, 20, 1.5],
+  ),
+};
+
+/// Rewrites the Liberty style [style] (decoded JSON) into an overlay for
+/// satellite imagery: drops backgrounds, fills, rasters and ground-cover
+/// lines, draws roads as thin translucent lines without casings, and
+/// switches labels to white text on a thin dark halo.
+Map<String, Object?> _hybridStyleJson(Map<String, Object?> style) {
+  final layers = <Map<String, Object?>>[];
+  for (final raw in style['layers'] as List? ?? const []) {
+    if (raw is! Map) continue;
+    final layer = Map<String, Object?>.of(raw.cast<String, Object?>());
+    final type = layer['type'];
+    final sourceLayer = layer['source-layer'];
+    final id = layer['id'] as String? ?? '';
+    final paint = Map<String, Object?>.of(
+      (layer['paint'] as Map? ?? const {}).cast<String, Object?>(),
+    );
+
+    if (type != 'line' && type != 'symbol' && type != 'circle') continue;
+    if (type == 'line' && _hybridHiddenSourceLayers.contains(sourceLayer)) {
+      continue;
+    }
+
+    if (type == 'line' && sourceLayer == 'transportation') {
+      final road =
+          _hybridRoads[id.replaceFirst(RegExp(r'^(road|bridge|tunnel)_'), '')];
+      if (road == null) continue; // casings, rail hatching, unknown classes
+      layer['minzoom'] = road.minzoom;
+      paint['line-color'] = road.color;
+      paint['line-width'] = _zoomRamp(road.width);
+      // Tunnels are underground: show them, but fainter.
+      if (id.startsWith('tunnel_')) {
+        paint['line-opacity'] = 0.55;
+      } else {
+        paint.remove('line-opacity');
+      }
+      if (id.contains('path_pedestrian')) {
+        paint['line-dasharray'] = [2, 1.5];
+      } else {
+        paint.remove('line-dasharray');
+      }
+    }
+
+    if (type == 'line' && sourceLayer == 'boundary') {
+      paint['line-color'] = 'rgba(255,255,255,0.6)';
+    }
+
+    if (type == 'symbol' && paint.containsKey('text-color')) {
+      final isWater = sourceLayer == 'water_name' || sourceLayer == 'waterway';
+      paint['text-color'] = isWater ? '#cfe6ff' : '#ffffff';
+      paint['text-halo-color'] = 'rgba(0,0,0,0.75)';
+      paint['text-halo-width'] = 1.2;
+      paint['text-halo-blur'] = 0.3;
+    }
+
+    layer['paint'] = paint;
+    layers.add(layer);
+  }
+  return {...style, 'layers': layers};
+}
+
+Future<vt.Theme> _loadHybridTheme(vt.Theme fallbackFrom) async {
+  try {
+    final response = await http.get(Uri.parse(vectorStyleUrl));
+    if (response.statusCode != 200) {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+    final style = (jsonDecode(response.body) as Map).cast<String, Object?>();
+    return const vt.ThemeReader(logger: vt.Logger.console()).read(
+      _hybridStyleJson(style),
+      // Must differ from the plain theme's id, which keys the (in-memory)
+      // finished-tile cache shared by both modes.
+      id: '${fallbackFrom.id}-hybrid',
+    );
+  } catch (error) {
+    log('Failed to build hybrid style, using filtered fallback: $error');
+    return _filteredHybridTheme(fallbackFrom);
+  }
+}
 
 String _twoDigits(int n) => n.toString().padLeft(2, '0');
 
@@ -256,6 +479,8 @@ class _LiveTrackPageState extends State<LiveTrackPage>
   DateTime? _lastUpdate;
   String? _trackerState;
   vt.Style? _vectorStyle;
+  vt.Theme? _hybridVectorTheme;
+  _BaseMap _baseMap = _loadSavedBaseMap();
   PushService? _pushService;
   String _appVersion = '';
 
@@ -373,9 +598,19 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       ).read();
       if (!mounted) return;
       setState(() => _vectorStyle = style);
+      // Built after the plain map is up so it never delays first paint.
+      final hybridTheme = await _loadHybridTheme(style.theme);
+      if (!mounted) return;
+      setState(() => _hybridVectorTheme = hybridTheme);
     } catch (error) {
       log('Failed to load vector style: $error');
     }
+  }
+
+  void _selectBaseMap(_BaseMap baseMap) {
+    if (baseMap == _baseMap) return;
+    _saveBaseMap(baseMap);
+    setState(() => _baseMap = baseMap);
   }
 
   Future<void> _loadAppVersion() async {
@@ -815,9 +1050,22 @@ class _LiveTrackPageState extends State<LiveTrackPage>
                     },
                   ),
                   children: [
-                    if (_vectorStyle != null)
+                    if (_baseMap.showsImagery)
+                      TileLayer(
+                        urlTemplate: satelliteTileUrl,
+                        // Imagery is patchy beyond z18 outside cities; upscale
+                        // z18 tiles rather than show "no data" placeholders.
+                        maxNativeZoom: 18,
+                      ),
+                    if (_vectorStyle != null &&
+                        (_baseMap == _BaseMap.map ||
+                            (_baseMap == _BaseMap.hybrid &&
+                                _hybridVectorTheme != null)))
                       vt.VectorTileLayer(
-                        theme: _vectorStyle!.theme,
+                        key: ValueKey(_baseMap),
+                        theme: _baseMap == _BaseMap.hybrid
+                            ? _hybridVectorTheme!
+                            : _vectorStyle!.theme,
                         tileProviders: _vectorStyle!.providers,
                         rasterSources: _vectorStyle!.rasterSources,
                         sprites: _vectorStyle!.sprites,
@@ -965,18 +1213,54 @@ class _LiveTrackPageState extends State<LiveTrackPage>
                         onPressed: () => _zoomBy(-1),
                         child: const Icon(Icons.remove),
                       ),
+                      const SizedBox(height: 8),
+                      MenuAnchor(
+                        alignmentOffset: const Offset(-112, 4),
+                        menuChildren: [
+                          for (final baseMap in _BaseMap.values)
+                            MenuItemButton(
+                              leadingIcon: Icon(baseMap.icon),
+                              trailingIcon: baseMap == _baseMap
+                                  ? const Icon(Icons.check)
+                                  : null,
+                              onPressed: () => _selectBaseMap(baseMap),
+                              child: Text(baseMap.label),
+                            ),
+                        ],
+                        builder: (context, controller, _) =>
+                            FloatingActionButton.small(
+                              heroTag: 'baseMap',
+                              backgroundColor: buttonColor,
+                              foregroundColor: buttonIconColor,
+                              tooltip: 'Map style',
+                              onPressed: () => controller.isOpen
+                                  ? controller.close()
+                                  : controller.open(),
+                              // Shows the active layer.
+                              child: Icon(_baseMap.icon),
+                            ),
+                      ),
                     ],
                   ),
                 ),
                 Positioned(
+                  // Both edges pinned so the longer satellite credit wraps
+                  // instead of running off narrow screens.
+                  left: 4,
                   right: 4,
                   bottom: 2,
                   child: IgnorePointer(
                     child: Text(
-                      'v$_appVersion',
+                      _baseMap.showsImagery
+                          ? '$satelliteAttribution · v$_appVersion'
+                          : 'v$_appVersion',
+                      textAlign: TextAlign.end,
                       style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurface
-                            .withValues(alpha: 0.4),
+                        // White over imagery, where the grey is unreadable.
+                        color: _baseMap.showsImagery
+                            ? Colors.white.withValues(alpha: 0.9)
+                            : Theme.of(context).colorScheme.onSurface
+                                  .withValues(alpha: 0.4),
                       ),
                     ),
                   ),

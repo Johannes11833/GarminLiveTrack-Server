@@ -12,17 +12,14 @@ dotenv = "^0.9.9"
 requests = "^2.32.5"
 rich = "^14.2.0"
 
-# Only pulled in by the API/tracker side (Playwright, FastAPI, push). The
-# email listener never imports any of these, so its image installs without
-# this group and can stay on Alpine -- Playwright ships no musllinux wheels.
+# Only pulled in by the API/tracker side (FastAPI, push). The email
+# listener never imports any of these, so its image installs without this
+# group.
 [tool.poetry.group.api]
 optional = true
 
 [tool.poetry.group.api.dependencies]
 qrcode = "^8.2"
-playwright = "^1.55"
-# greenlet 3.2 has no CPython 3.9 Windows wheel; keep Poetry installs binary-only.
-greenlet = "^3.5.5"
 fastapi = "^0.141.1"
 uvicorn = {version = "^0.34.0", extras = ["standard"]}
 pywebpush = "^2.0.0"

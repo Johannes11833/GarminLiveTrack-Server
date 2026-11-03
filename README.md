@@ -61,7 +61,7 @@ An email listener auto-starts tracking sessions from incoming Garmin emails, a R
 
 ## Highlights
 
-- 🧵 **Multiple riders at once** — every session runs in its own Playwright worker, so concurrent sessions don't step on each other.
+- 🧵 **Multiple riders at once** — every session runs in its own worker with its own Garmin connection, so concurrent sessions don't step on each other.
 - 🗺️ **Live Flutter viewer** — full-screen map, route, distance, speed, elevation and heart-rate charts, responsive from phone to desktop.
 - 🔔 **Push without Firebase** — standard Web Push (VAPID) sends "started" and "ended" notifications that deep-link straight into the session.
 - 🧪 **Dummy mode** — simulate a five-minute session with synthetic data to try the UI without a Garmin link.
@@ -73,7 +73,7 @@ An email listener auto-starts tracking sessions from incoming Garmin emails, a R
 flowchart LR
     Mail["Garmin LiveTrack email"] -->|IMAP| Listener["Email listener"]
     Listener -->|"POST /trackings"| API["REST API"]
-    API <-->|"Playwright"| Garmin["livetrack.garmin.com"]
+    API <-->|"HTTPS polling"| Garmin["livetrack.garmin.com"]
     API -->|"JSON"| Viewer["Flutter web viewer"]
     API -->|"Web Push (VAPID)"| Devices["Registered devices"]
 ```
@@ -117,7 +117,7 @@ and `linux/arm64`, tagged both `latest` and the release version:
 
 | Image                                                                                                                                                             | Purpose                            |
 | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------- |
-| [`ghcr.io/johannes11833/garmin-livetrack-api`](https://github.com/Johannes11833/GarminLiveTrack-Server/pkgs/container/garmin-livetrack-api)                       | FastAPI + Playwright tracking API  |
+| [`ghcr.io/johannes11833/garmin-livetrack-api`](https://github.com/Johannes11833/GarminLiveTrack-Server/pkgs/container/garmin-livetrack-api)                       | FastAPI tracking API              |
 | [`ghcr.io/johannes11833/garmin-livetrack-email-listener`](https://github.com/Johannes11833/GarminLiveTrack-Server/pkgs/container/garmin-livetrack-email-listener) | IMAP listener that starts sessions |
 | [`ghcr.io/johannes11833/garmin-livetrack-viewer`](https://github.com/Johannes11833/GarminLiveTrack-Server/pkgs/container/garmin-livetrack-viewer)                 | Flutter web viewer served by nginx |
 
@@ -126,13 +126,12 @@ Use `docker compose up -d --build` to build everything locally, or
 
 ### Run livetrack bot w/o a container
 
-The API dependencies (`fastapi`, `uvicorn`, `playwright`, `slowapi` and
+The API dependencies (`fastapi`, `uvicorn`, `slowapi` and
 `pywebpush`) live in the optional `api` group, so install them explicitly --
 plain `poetry install` skips that group:
 
 ```bash
 poetry install --with api
-poetry run playwright install chromium
 ```
 
 Then start both processes:
@@ -145,28 +144,12 @@ poetry run garmin-livetrack-api
 poetry run garmin-livetrack-email-listener
 ```
 
-### Extract LiveTrack data
-
-Garmin blocks direct API clients, so the extractor uses Chromium to make
-same-origin API requests. Install the dependency and browser once, then pass a
-LiveTrack share URL:
-
-```bash
-poetry install --with api
-poetry run playwright install chromium
-poetry run python garmin_livetrack/playwright_livetrack.py "https://livetrack.garmin.com/session/<id>/token/<token>"
-```
-
-The extractor writes `session.json`, `track.json`, and (when available)
-`course.json` in `garmin_livetrack/`. Press `Ctrl+C` to stop polling.
-
 ### LiveTrack REST API
 
 Run the independent multi-session API with:
 
 ```bash
 poetry install --with api
-poetry run playwright install chromium
 poetry run garmin-livetrack-api
 ```
 
@@ -190,7 +173,9 @@ curl -X POST http://127.0.0.1:8000/trackings \
   -d '{"url":"https://livetrack.garmin.com/session/<id>/token/<token>"}'
 ```
 
-Each session has its own Playwright worker and can run alongside other sessions.
+Each session has its own worker and can run alongside other sessions. A
+worker loads the LiveTrack share page once to get the CSRF token and cookie
+Garmin's API requires, then polls the API with plain HTTP requests.
 
 To try the viewer UI without a real Garmin LiveTrack link, enable dummy mode
 (`LIVETRACK_ENABLE_DUMMY_MODE=1` in `.env`). A simulated session then starts
@@ -366,5 +351,5 @@ CLOUDFLARE_TUNNEL_TOKEN = "..."
 ---
 
 <p align="center">
-  <sub>Built with FastAPI, Playwright and Flutter. Not affiliated with Garmin.</sub>
+  <sub>Built with FastAPI and Flutter. Not affiliated with Garmin.</sub>
 </p>

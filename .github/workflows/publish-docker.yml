@@ -38,6 +38,9 @@ jobs:
             image: garmin-livetrack-email-listener
           - dockerfile: Dockerfile.viewer
             image: garmin-livetrack-viewer
+            # Built on the runner (steps below) and handed to the image build
+            # in place of Dockerfile.viewer's in-Docker Flutter stage.
+            build-contexts: viewer-web=garmin_livetrack_viewer/build/web
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -48,6 +51,27 @@ jobs:
       - name: Bump Flutter app version
         run: |
           sed -i -E "s/^version: .*/version: ${{ needs.version.outputs.version }}+1/" garmin_livetrack_viewer/pubspec.yaml
+
+      - name: Read Flutter version
+        if: matrix.image == 'garmin-livetrack-viewer'
+        id: flutter
+        run: echo "version=$(cat .flutter-version)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Flutter
+        if: matrix.image == 'garmin-livetrack-viewer'
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ steps.flutter.outputs.version }}
+          cache: true
+
+      # Keep in sync with the `flutter build web` line in Dockerfile.viewer.
+      - name: Build Flutter web app
+        if: matrix.image == 'garmin-livetrack-viewer'
+        working-directory: garmin_livetrack_viewer
+        run: |
+          flutter pub get
+          flutter build web --release --wasm
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -72,12 +96,13 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
+          build-contexts: ${{ matrix.build-contexts }}
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:latest
             ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:${{ needs.version.outputs.version }}
           # Reuse layers from the previous build. mode=max also caches the
-          # intermediate Poetry and Flutter builder stages.
+          # intermediate Poetry builder stage.
           cache-from: type=registry,ref=ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:buildcache
           cache-to: type=registry,ref=ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:buildcache,mode=max

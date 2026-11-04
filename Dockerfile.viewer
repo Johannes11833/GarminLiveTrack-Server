@@ -36,12 +36,20 @@ COPY garmin_livetrack_viewer/ ./
 # recommendation -- notably faster map rendering on mobile than the JS/
 # CanvasKit fallback. flutter_bootstrap.js auto-falls back to JS on browsers
 # without WasmGC support.
+# Keep in sync with the "Build Flutter web app" step in publish-docker.yml.
 RUN flutter build web --release --wasm
+
+
+# The finished web build. CI builds it on the runner instead and overrides
+# this stage with `build-contexts: viewer-web=...` (publish-docker.yml), so
+# BuildKit skips the builder stage there; local builds still run it.
+FROM scratch AS viewer-web
+COPY --from=builder /app/build/web /
 
 
 FROM nginx:alpine AS runtime
 
-COPY --from=builder /app/build/web /usr/share/nginx/html
+COPY --from=viewer-web / /usr/share/nginx/html
 COPY garmin_livetrack_viewer/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

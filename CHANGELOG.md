@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.5.0](https://github.com/Johannes11833/GarminLiveTrack-Server/compare/v1.4.0...v1.5.0) (2026-11-04)
+
+
+### Features
+
+* **api:** replace Playwright with plain HTTP polling ([#31](https://github.com/Johannes11833/GarminLiveTrack-Server/issues/31)) ([4a01e02](https://github.com/Johannes11833/GarminLiveTrack-Server/commit/4a01e0251d6e7263f1dfd926796954a186b47fde))
+* **viewer:** add satellite and hybrid basemaps ([#29](https://github.com/Johannes11833/GarminLiveTrack-Server/issues/29)) ([111b42e](https://github.com/Johannes11833/GarminLiveTrack-Server/commit/111b42ee259435188208d872a7c829340819173b))
+
 ## [1.4.0](https://github.com/Johannes11833/GarminLiveTrack-Server/compare/v1.3.0...v1.4.0) (2026-11-03)
 
 

@@ -4,6 +4,9 @@ on:
   push:
     tags:
       - 'v*.*.*'
+    # TEMPORARY test trigger -- revert before merging.
+    branches:
+      - ci/viewer-build-on-runner
   workflow_call:
     inputs:
       tag:
@@ -20,7 +23,7 @@ jobs:
       - name: Extract version from tag
         id: version
         env:
-          TAG: ${{ inputs.tag || github.ref_name }}
+          TAG: ${{ inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v0.0.0-test' }}
         run: echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
   build:
@@ -97,7 +100,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           build-contexts: ${{ matrix.build-contexts }}
-          push: true
+          push: false
           platforms: linux/amd64,linux/arm64
           tags: |
             ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:latest
@@ -105,4 +108,3 @@ jobs:
           # Reuse layers from the previous build. mode=max also caches the
           # intermediate Poetry builder stage.
           cache-from: type=registry,ref=ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ env.owner_lc }}/${{ matrix.image }}:buildcache,mode=max

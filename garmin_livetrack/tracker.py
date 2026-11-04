@@ -1,5 +1,12 @@
-"""Tracker: one browser worker and isolated state for one LiveTrack share
+"""Tracker: one polling worker and isolated state for one LiveTrack share
 URL, plus TrackerManager for keeping track of all active sessions.
+
+Garmin's LiveTrack API rejects requests without the CSRF token and cookie
+that its share page hands out, so each tracker loads that page once with a
+plain HTTP session, reads the token from the page's
+``<meta name="csrf-token">`` tag, and reuses both for its API calls. When
+Garmin answers 403 (token or cookie expired), the page is loaded again and
+the request retried once.
 """
 
 import copy
@@ -12,11 +19,18 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import requests
-from playwright.sync_api import sync_playwright
 
 from garmin_livetrack import push
 
 POLL_SECONDS = 5
+REQUEST_TIMEOUT_SECONDS = 30
+# Garmin's share page is served to browsers; a browser-like User-Agent keeps
+# it from treating the tracker as an unknown bot.
+USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+)
+CSRF_META_RE = re.compile(r'<meta[^>]*name="csrf-token"[^>]*content="([^"]+)"')
 TERMINAL_STATES = {"stopped", "ended", "error"}
 URL_RE = re.compile(
     r"session/(?P<session_id>[0-9a-fA-F-]+)/token/(?P<token>[0-9A-Za-z]+)"
@@ -26,7 +40,7 @@ CLEANUP_INTERVAL_SECONDS = int(os.getenv("LIVETRACK_TRACKER_CLEANUP_INTERVAL_SEC
 # How long a finished (stopped/ended/error) tracker stays viewable before
 # being dropped.
 TRACKER_RETENTION_SECONDS = int(os.getenv("LIVETRACK_TRACKER_RETENTION_SECONDS", 24 * 60 * 60))
-# Safety net for a tracker stuck running (e.g. a hung Playwright worker):
+# Safety net for a tracker stuck running (e.g. a hung worker thread):
 # force-stop and drop it after this long regardless of state.
 TRACKER_MAX_AGE_SECONDS = int(os.getenv("LIVETRACK_TRACKER_MAX_AGE_SECONDS", 2 * 24 * 60 * 60))
 
@@ -131,7 +145,7 @@ def _distance_meters(a: Dict[str, Any], b: Dict[str, Any]) -> float:
 
 
 class Tracker:
-    """One browser worker and isolated state for one LiveTrack share URL."""
+    """One polling worker and isolated state for one LiveTrack share URL."""
 
     def __init__(self, url: str):
         self.url = url
@@ -149,6 +163,8 @@ class Tracker:
         self.last_timestamp: Optional[int] = None
         self.track_begin: Optional[str] = None
         self.csrf_token: Optional[str] = None
+        self._http = requests.Session()
+        self._http.headers["User-Agent"] = USER_AGENT
         self._start_notified = False
         self._end_notified = False
         self._profile_fetched = False
@@ -185,14 +201,14 @@ class Tracker:
         if result.get("error"):
             raise RuntimeError(result["error"])
 
-    def _drain_outbox(self, page) -> None:
+    def _drain_outbox(self) -> None:
         while True:
             try:
                 sender, content, done, result = self._outbox.get_nowait()
             except queue.Empty:
                 break
             try:
-                self._send_message(page, sender, content)
+                self._send_message(sender, content)
             except Exception as error:
                 result["error"] = str(error)
             done.set()
@@ -228,94 +244,77 @@ class Tracker:
         with self.lock:
             return copy.deepcopy(self.course)
 
-    def _capture_csrf_token(self, request) -> None:
-        if "livetrack.garmin.com/api/" not in request.url:
-            return
-        token = request.headers.get("livetrack-csrf-token")
-        if token:
+    def _open_share_page(self) -> None:
+        """Loads the share page, which sets Garmin's CSRF cookie on the HTTP
+        session and carries the matching token in a meta tag."""
+        response = self._http.get(self.url, timeout=REQUEST_TIMEOUT_SECONDS)
+        response.raise_for_status()
+        match = CSRF_META_RE.search(response.text)
+        if not match:
+            raise RuntimeError("Garmin share page did not include a CSRF token.")
+        with self.lock:
+            changed = match.group(1) != self.csrf_token
+            self.csrf_token = match.group(1)
+        if changed:
+            print(f"[{self.session_id}] Garmin CSRF token captured.")
+
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
+    ) -> Optional[Any]:
+        """Calls Garmin's API with the share page's CSRF token, refreshing it
+        once if Garmin rejects it."""
+        for attempt in range(2):
             with self.lock:
-                changed = token != self.csrf_token
-                self.csrf_token = token
-            if changed:
-                print(f"[{self.session_id}] Garmin CSRF token captured.")
+                csrf_token = self.csrf_token
+            try:
+                response = self._http.request(
+                    method,
+                    url,
+                    headers={"livetrack-csrf-token": csrf_token or "", **(headers or {})},
+                    timeout=REQUEST_TIMEOUT_SECONDS,
+                    **kwargs,
+                )
+                if response.status_code == 403 and attempt == 0:
+                    self._open_share_page()
+                    continue
+            except requests.RequestException as error:
+                raise RuntimeError(f"Garmin API request failed: {error}") from error
+            if not response.ok:
+                raise RuntimeError(f"Garmin API returned HTTP {response.status_code}.")
+            return response.json() if response.content else None
+        return None
 
-    def _fetch_json(self, page, url: str, params: Dict[str, str]) -> Optional[Any]:
-        with self.lock:
-            csrf_token = self.csrf_token
-        if not csrf_token:
-            return None
-        result = page.evaluate(
-            """async ({url, params, csrfToken}) => {
-                try {
-                    const requestUrl = new URL(url);
-                    for (const [key, value] of Object.entries(params)) {
-                        requestUrl.searchParams.set(key, value);
-                    }
-                    const response = await fetch(requestUrl, {
-                        cache: 'no-store',
-                        headers: {'livetrack-csrf-token': csrfToken},
-                    });
-                    const text = await response.text();
-                    return {ok: response.ok, status: response.status,
-                            data: text ? JSON.parse(text) : null};
-                } catch (error) {
-                    return {ok: false, status: 0, error: String(error)};
-                }
-            }""",
-            {"url": url, "params": params, "csrfToken": csrf_token},
-        )
-        if result.get("ok"):
-            return result.get("data")
-        raise RuntimeError(f"Garmin API returned HTTP {result.get('status')}.")
+    def _fetch_json(self, url: str, params: Dict[str, str]) -> Optional[Any]:
+        return self._request_json("GET", url, params=params)
 
-    def _post_json(self, page, url: str, body: Dict[str, Any]) -> Optional[Any]:
-        with self.lock:
-            csrf_token = self.csrf_token
-        if not csrf_token:
-            raise RuntimeError("Not ready yet: missing Garmin session token.")
-        result = page.evaluate(
-            """async ({url, body, csrfToken}) => {
-                try {
-                    const response = await fetch(url, {
-                        method: 'POST',
-                        cache: 'no-store',
-                        headers: {
-                            'livetrack-csrf-token': csrfToken,
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(body),
-                    });
-                    const text = await response.text();
-                    return {ok: response.ok, status: response.status,
-                            data: text ? JSON.parse(text) : null};
-                } catch (error) {
-                    return {ok: false, status: 0, error: String(error)};
-                }
-            }""",
-            {"url": url, "body": body, "csrfToken": csrf_token},
-        )
-        if result.get("ok"):
-            return result.get("data")
-        raise RuntimeError(f"Garmin API returned HTTP {result.get('status')}.")
+    def _post_json(
+        self,
+        url: str,
+        body: Dict[str, Any],
+        params: Optional[Dict[str, str]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Optional[Any]:
+        return self._request_json("POST", url, headers=headers, params=params, json=body)
 
-    def _send_message(self, page, sender: str, content: str) -> None:
+    def _send_message(self, sender: str, content: str) -> None:
         with self.lock:
             session = self.session
         if not session:
             raise RuntimeError("Session not ready yet.")
-        unit_id = session.get("unitId")
-        profile_id = (session.get("publisher") or {}).get("connectUserProfileId")
-        if unit_id is None or profile_id is None:
-            raise RuntimeError("Missing unitId/userProfileId for this session.")
+        guid = (session.get("publisher") or {}).get("garminGuid")
+        if not guid:
+            raise RuntimeError("Missing publisher garminGuid for this session.")
+        # Garmin's frontend identifies the session via query params and the
+        # publisher's GUID header; the body carries only the message itself.
         self._post_json(
-            page,
             "https://livetrack.garmin.com/api/messages/spectator/text",
-            {
-                "from": sender,
-                "content": content,
-                "unitId": unit_id,
-                "userProfileId": profile_id,
-            },
+            {"from": sender, "content": content},
+            params={"sessionId": self.session_id, "token": self.token},
+            headers={"X-Garmin-LiveTrack-User-Guid": guid},
         )
 
     def _save_session(self, data: Dict[str, Any]) -> bool:
@@ -340,10 +339,10 @@ class Tracker:
             push.notify(self.session_id, self.token, "LiveTrack ended", name)
         return live
 
-    def _fetch_profile_image(self, page, guid: str) -> None:
+    def _fetch_profile_image(self, guid: str) -> None:
         try:
             profile = self._fetch_json(
-                page, f"https://livetrack.garmin.com/api/user/{guid}/profile", {}
+                f"https://livetrack.garmin.com/api/user/{guid}/profile", {}
             )
         except RuntimeError as error:
             print(f"[{self.session_id}] profile fetch failed: {error}")
@@ -356,7 +355,7 @@ class Tracker:
         if not image_url:
             return
         try:
-            response = requests.get(image_url, timeout=10)
+            response = self._http.get(image_url, timeout=10)
             response.raise_for_status()
         except requests.RequestException as error:
             print(f"[{self.session_id}] profile image download failed: {error}")
@@ -435,63 +434,54 @@ class Tracker:
         )
         course_url = f"https://livetrack.garmin.com/api/v1/sessions/{self.session_id}/courses"
         try:
-            with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True)
+            self._open_share_page()
+            with self.lock:
+                self._mark_state("waiting_for_garmin")
+            while not self.stop_requested.is_set():
+                self._drain_outbox()
                 try:
-                    page = browser.new_page()
-                    page.on("request", self._capture_csrf_token)
-                    page.goto(self.url, wait_until="domcontentloaded", timeout=30000)
+                    session = self._fetch_json(session_url, {"token": self.token})
+                    if not isinstance(session, dict):
+                        raise RuntimeError("Garmin returned no session data.")
+                    live = self._save_session(session)
+                    if not self._profile_fetched:
+                        guid = (session.get("publisher") or {}).get("garminGuid")
+                        if guid:
+                            self._profile_fetched = True
+                            self._fetch_profile_image(guid)
                     with self.lock:
-                        self._mark_state("waiting_for_garmin")
-                    while not self.stop_requested.is_set():
-                        self._drain_outbox(page)
-                        try:
-                            session = self._fetch_json(page, session_url, {"token": self.token})
-                            if not isinstance(session, dict):
-                                # Let Playwright process Garmin's initial request,
-                                # which supplies the CSRF header we must reuse.
-                                page.wait_for_timeout(1000)
-                                continue
-                            live = self._save_session(session)
-                            if not self._profile_fetched:
-                                guid = (session.get("publisher") or {}).get(
-                                    "garminGuid"
-                                )
-                                if guid:
-                                    self._profile_fetched = True
-                                    self._fetch_profile_image(page, guid)
-                            with self.lock:
-                                begin = self.track_begin
-                            track = self._fetch_json(
-                                page,
-                                track_url,
-                                {"token": self.token, "begin": begin or session.get("start", "")},
-                            )
-                            if track is not None:
-                                self._save_track(track)
-                            course = self._fetch_json(page, course_url, {"token": self.token})
-                            if course is not None:
-                                self._save_course(course)
-                            if not live:
-                                with self.lock:
-                                    self._mark_state("ended")
-                                return
-                            with self.lock:
-                                self._mark_state("running")
-                        except RuntimeError as error:
-                            with self.lock:
-                                self.error = str(error)
-                                self._mark_state("error")
-                            return
-                        self._wake.wait(POLL_SECONDS)
-                        self._wake.clear()
-                finally:
-                    browser.close()
+                        begin = self.track_begin
+                    track = self._fetch_json(
+                        track_url,
+                        {"token": self.token, "begin": begin or session.get("start", "")},
+                    )
+                    if track is not None:
+                        self._save_track(track)
+                    course = self._fetch_json(course_url, {"token": self.token})
+                    if course is not None:
+                        self._save_course(course)
+                    if not live:
+                        with self.lock:
+                            self._mark_state("ended")
+                        return
+                    with self.lock:
+                        self._mark_state("running")
+                except RuntimeError as error:
+                    print(f"[{self.session_id}] tracker error: {error}")
+                    with self.lock:
+                        self.error = str(error)
+                        self._mark_state("error")
+                    return
+                self._wake.wait(POLL_SECONDS)
+                self._wake.clear()
         except Exception as error:
+            print(f"[{self.session_id}] tracker error: {error}")
             with self.lock:
                 self.error = str(error)
                 self._mark_state("error")
             return
+        finally:
+            self._http.close()
         with self.lock:
             self._mark_state("stopped")
 

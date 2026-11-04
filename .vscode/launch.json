@@ -6,6 +6,10 @@
     // The dummy session id/token below must match between the API config
     // (LIVETRACK_DUMMY_SESSION_*) and the Flutter configs (DEBUG_SESSION_*),
     // so the viewer opens straight onto the API's simulated session.
+    //
+    // The "real session" configs instead prompt for a LiveTrack share URL on
+    // launch (LIVETRACK_DEBUG_URL), so a real share token never lands in the
+    // repo.
     "version": "0.2.0",
     "configurations": [
         {
@@ -47,6 +51,34 @@
                 "LIVETRACK_DUMMY_SESSION_ID": "d0d0d0d0-0000-4000-8000-000000000001",
                 "LIVETRACK_DUMMY_SESSION_TOKEN": "debugtoken"
             }
+        },
+        {
+            "name": "Flutter (chrome, real session)",
+            "type": "dart",
+            "request": "launch",
+            "program": "garmin_livetrack_viewer/lib/main.dart",
+            "deviceId": "chrome",
+            "args": [
+                "--dart-define=API_BASE_URL=http://127.0.0.1:8000",
+                "--dart-define=LIVETRACK_DEBUG_URL=${input:liveTrackUrl}"
+            ]
+        },
+        {
+            "name": "Python Debugger: livetrack_api.py (real session)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "garmin_livetrack/livetrack_api.py",
+            "console": "integratedTerminal",
+            "env": {
+                "LIVETRACK_DEBUG_URL": "${input:liveTrackUrl}"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "liveTrackUrl",
+            "type": "promptString",
+            "description": "LiveTrack share URL (https://livetrack.garmin.com/session/<id>/token/<token>)"
         }
     ],
     "compounds": [
@@ -57,6 +89,16 @@
             "configurations": [
                 "Python Debugger: livetrack_api.py",
                 "Flutter (chrome)"
+            ],
+            "stopAll": true
+        },
+        {
+            // The API starts tracking LIVETRACK_DEBUG_URL on boot; the viewer
+            // shows it once Garmin's first poll has come back.
+            "name": "API + Viewer (real session)",
+            "configurations": [
+                "Python Debugger: livetrack_api.py (real session)",
+                "Flutter (chrome, real session)"
             ],
             "stopAll": true
         }

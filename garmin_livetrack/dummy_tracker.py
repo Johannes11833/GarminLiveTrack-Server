@@ -43,7 +43,7 @@ class DummyTracker(Tracker):
             "publisher": {"connectUserProfileId": 0, "garminGuid": "dummy"},
         }
 
-    def _send_message(self, page, sender: str, content: str) -> None:
+    def _send_message(self, sender: str, content: str) -> None:
         # No real Garmin session to post to; just accept it.
         print(f"[{self.session_id}] (dummy) message from {sender}: {content}")
 
@@ -65,7 +65,7 @@ class DummyTracker(Tracker):
         distance_m = 0.0
         elapsed = 0
         while not self.stop_requested.is_set() and elapsed < self.DURATION_SECONDS:
-            self._drain_outbox(None)
+            self._drain_outbox()
             heading += random.uniform(-20, 20)
             step_m = random.uniform(3, 6) * self.POLL_SECONDS
             lat += (step_m * math.cos(math.radians(heading))) / 111_111
@@ -94,7 +94,7 @@ class DummyTracker(Tracker):
             self._wake.wait(self.POLL_SECONDS)
             self._wake.clear()
 
-        self._drain_outbox(None)
+        self._drain_outbox()
         with self.lock:
             if self.stop_requested.is_set():
                 self._mark_state("stopped")

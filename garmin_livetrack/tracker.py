@@ -258,7 +258,13 @@ class Tracker:
         if changed:
             print(f"[{self.session_id}] Garmin CSRF token captured.")
 
-    def _request_json(self, method: str, url: str, **kwargs: Any) -> Optional[Any]:
+    def _request_json(
+        self,
+        method: str,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        **kwargs: Any,
+    ) -> Optional[Any]:
         """Calls Garmin's API with the share page's CSRF token, refreshing it
         once if Garmin rejects it."""
         for attempt in range(2):
@@ -268,7 +274,7 @@ class Tracker:
                 response = self._http.request(
                     method,
                     url,
-                    headers={"livetrack-csrf-token": csrf_token or ""},
+                    headers={"livetrack-csrf-token": csrf_token or "", **(headers or {})},
                     timeout=REQUEST_TIMEOUT_SECONDS,
                     **kwargs,
                 )
@@ -285,26 +291,30 @@ class Tracker:
     def _fetch_json(self, url: str, params: Dict[str, str]) -> Optional[Any]:
         return self._request_json("GET", url, params=params)
 
-    def _post_json(self, url: str, body: Dict[str, Any]) -> Optional[Any]:
-        return self._request_json("POST", url, json=body)
+    def _post_json(
+        self,
+        url: str,
+        body: Dict[str, Any],
+        params: Optional[Dict[str, str]] = None,
+        headers: Optional[Dict[str, str]] = None,
+    ) -> Optional[Any]:
+        return self._request_json("POST", url, headers=headers, params=params, json=body)
 
     def _send_message(self, sender: str, content: str) -> None:
         with self.lock:
             session = self.session
         if not session:
             raise RuntimeError("Session not ready yet.")
-        unit_id = session.get("unitId")
-        profile_id = (session.get("publisher") or {}).get("connectUserProfileId")
-        if unit_id is None or profile_id is None:
-            raise RuntimeError("Missing unitId/userProfileId for this session.")
+        guid = (session.get("publisher") or {}).get("garminGuid")
+        if not guid:
+            raise RuntimeError("Missing publisher garminGuid for this session.")
+        # Garmin's frontend identifies the session via query params and the
+        # publisher's GUID header; the body carries only the message itself.
         self._post_json(
             "https://livetrack.garmin.com/api/messages/spectator/text",
-            {
-                "from": sender,
-                "content": content,
-                "unitId": unit_id,
-                "userProfileId": profile_id,
-            },
+            {"from": sender, "content": content},
+            params={"sessionId": self.session_id, "token": self.token},
+            headers={"X-Garmin-LiveTrack-User-Guid": guid},
         )
 
     def _save_session(self, data: Dict[str, Any]) -> bool:

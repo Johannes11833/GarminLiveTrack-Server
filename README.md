@@ -195,6 +195,11 @@ when the URL names no session. `.vscode/launch.json` sets both sides to the
 same values; its **API + Viewer (dummy session)** compound starts the API and
 the viewer together, and the viewer shows the route as soon as the session is up.
 
+To debug against a real session instead, launch the **API + Viewer (real
+session)** compound. VS Code prompts for a LiveTrack share URL and passes it to
+both as `LIVETRACK_DEBUG_URL`: the API starts tracking it on boot, and the
+viewer opens straight onto it.
+
 - `GET /trackings` lists all tracking sessions (also requires the API token).
 - `GET /trackings/{session_id}/token/{token}` returns a session's status and counts.
 - `GET /trackings/{session_id}/token/{token}/track` returns accumulated track points.

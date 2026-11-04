@@ -41,6 +41,9 @@ DUMMY_MODE_ENABLED = os.getenv("LIVETRACK_ENABLE_DUMMY_MODE", "").lower() in {
 # launched pointing at it (see .vscode/launch.json). Random when unset.
 DUMMY_SESSION_ID = os.getenv("LIVETRACK_DUMMY_SESSION_ID", "").strip() or None
 DUMMY_SESSION_TOKEN = os.getenv("LIVETRACK_DUMMY_SESSION_TOKEN", "").strip() or None
+# Optional real share URL to start tracking on boot, so a debug viewer can be
+# launched pointing at it (see .vscode/launch.json).
+DEBUG_URL = os.getenv("LIVETRACK_DEBUG_URL", "").strip()
 
 
 @limiter.shared_limit("20/minute", scope="api_token_guess")
@@ -93,8 +96,19 @@ def _start_dummy_session() -> None:
     )
 
 
+def _start_debug_session() -> None:
+    try:
+        tracker = manager.start(DEBUG_URL)
+    except ValueError as error:
+        print(f"[debug] Could not start LIVETRACK_DEBUG_URL: {error}")
+        return
+    print(f"[debug] Started tracking LIVETRACK_DEBUG_URL: id={tracker.session_id}")
+
+
 @app.on_event("startup")
 def startup() -> None:
+    if DEBUG_URL:
+        _start_debug_session()
     if DUMMY_MODE_ENABLED:
         # Delayed so it doesn't hold up the API becoming available.
         threading.Timer(5.0, _start_dummy_session).start()

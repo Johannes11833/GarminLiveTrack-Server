@@ -21,10 +21,19 @@ import 'push_service.dart';
 const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
 // Session to show when the URL names none, so a debug launch opens straight
-// onto the API's dummy session (see .vscode/launch.json). Empty in release
-// builds, where the session always comes from the URL or the last one seen.
-const _debugSessionId = String.fromEnvironment('DEBUG_SESSION_ID');
-const _debugSessionToken = String.fromEnvironment('DEBUG_SESSION_TOKEN');
+// onto the API's dummy session or LIVETRACK_DEBUG_URL (a full share URL; see
+// .vscode/launch.json). Empty in release builds, where the session always
+// comes from the URL or the last one seen.
+const _debugSessionIdDefine = String.fromEnvironment('DEBUG_SESSION_ID');
+const _debugSessionTokenDefine = String.fromEnvironment('DEBUG_SESSION_TOKEN');
+final _debugUrlMatch = RegExp(r'session/([0-9a-fA-F-]+)/token/([0-9A-Za-z]+)')
+    .firstMatch(const String.fromEnvironment('LIVETRACK_DEBUG_URL'));
+final _debugSessionId = _debugSessionIdDefine.isNotEmpty
+    ? _debugSessionIdDefine
+    : _debugUrlMatch?.group(1) ?? '';
+final _debugSessionToken = _debugSessionTokenDefine.isNotEmpty
+    ? _debugSessionTokenDefine
+    : _debugUrlMatch?.group(2) ?? '';
 
 const _senderNameStorageKey = 'livetrack_sender_name';
 const _pushTokenStorageKey = 'livetrack_push_token';

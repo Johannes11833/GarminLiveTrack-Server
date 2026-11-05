@@ -1259,23 +1259,32 @@ class _LiveTrackPageState extends State<LiveTrackPage>
                   ),
                 ),
                 Positioned(
-                  // Both edges pinned so the longer satellite credit wraps
-                  // instead of running off narrow screens.
+                  // Both edges pinned so the longer satellite credit shrinks
+                  // to fit narrow screens on one line rather than running
+                  // off them; not truncated, as Esri's terms require the
+                  // full credit to stay visible.
                   left: 4,
                   right: 4,
                   bottom: 2,
                   child: IgnorePointer(
-                    child: Text(
-                      _baseMap.showsImagery
-                          ? '$satelliteAttribution · v$_appVersion'
-                          : 'v$_appVersion',
-                      textAlign: TextAlign.end,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        // White over imagery, where the grey is unreadable.
-                        color: _baseMap.showsImagery
-                            ? Colors.white.withValues(alpha: 0.9)
-                            : Theme.of(context).colorScheme.onSurface
-                                  .withValues(alpha: 0.4),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        _baseMap.showsImagery
+                            ? '$satelliteAttribution · v$_appVersion'
+                            : 'v$_appVersion',
+                        maxLines: 1,
+                        softWrap: false,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          // White over imagery, where the grey is unreadable.
+                          // Not on compact layouts: there the full-width
+                          // bottom sheet sits behind this text, not the map.
+                          color: _baseMap.showsImagery && !isCompact
+                              ? Colors.white.withValues(alpha: 0.9)
+                              : Theme.of(context).colorScheme.onSurface
+                                    .withValues(alpha: 0.4),
+                        ),
                       ),
                     ),
                   ),

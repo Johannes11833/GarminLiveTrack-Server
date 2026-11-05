@@ -1086,7 +1086,13 @@ class _LiveTrackPageState extends State<LiveTrackPage>
                         // labels on desktop. Rotation is disabled in this map,
                         // so the main visual trade-off of tile labels (text
                         // rotating with the map) does not apply here.
-                        labelMode: isCompact
+                        //
+                        // Except in hybrid: while zooming, the layer keeps the
+                        // previous level's tiles painted underneath until the
+                        // new level is ready. Hybrid tiles are transparent, so
+                        // those upscaled tiles -- and any labels baked into
+                        // them -- show through as huge, blurry duplicates.
+                        labelMode: isCompact && _baseMap != _BaseMap.hybrid
                             ? vt.LabelMode.tile
                             : vt.LabelMode.screen,
                       ),

@@ -144,11 +144,19 @@ class GarminLinkListener:
 
         # iterate over the found emails, latest first
         for uid, message_data in reversed(response.items()):
-            msg = email.message_from_bytes(message_data[b"RFC822"])
-            logger.info(
-                f"Found email from {msg.get("From")} with subject {msg.get("Subject")}"
-            )
-            link = self.__extract_garmin_link(msg)
+            # A malformed email must not escape as an error: the caller would
+            # treat it as a connection problem and reconnect, and since the
+            # email is never marked as read, every later search would hit it
+            # again. Log it and mark it as read like any other.
+            try:
+                msg = email.message_from_bytes(message_data[b"RFC822"])
+                logger.info(
+                    f"Found email from {msg.get("From")} with subject {msg.get("Subject")}"
+                )
+                link = self.__extract_garmin_link(msg)
+            except Exception as e:
+                logger.warning(f"Skipping Garmin email {uid} that could not be parsed: {e}")
+                link = None
 
             try:
                 # Add the \Seen flag so we won't accidentally process this message again

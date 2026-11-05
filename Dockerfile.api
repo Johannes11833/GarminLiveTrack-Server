@@ -1,7 +1,10 @@
 FROM python:3.13-alpine AS base
 
+# Unbuffered so print() output reaches the container log immediately,
+# with the right timestamp.
 ENV VIRTUAL_ENV=/app/.venv \
-    PATH="/app/.venv/bin:$PATH"
+    PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1
 
 
 FROM base AS builder

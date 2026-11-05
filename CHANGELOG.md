@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/Johannes11833/GarminLiveTrack-Server/compare/v1.5.0...v1.5.1) (2026-11-05)
+
+
+### Bug Fixes
+
+* **listener:** search inbox periodically so lost IDLE notices can't delay sessions ([#33](https://github.com/Johannes11833/GarminLiveTrack-Server/issues/33)) ([5fe28d6](https://github.com/Johannes11833/GarminLiveTrack-Server/commit/5fe28d6fd63f1b9d120f3fb11030485c6e3a7127))
+
 ## [1.5.0](https://github.com/Johannes11833/GarminLiveTrack-Server/compare/v1.4.0...v1.5.0) (2026-11-04)
 
 

@@ -35,7 +35,20 @@ jobs:
             revert
             style
             test
+          # One scope per deployable part plus deployment, deps and dev
+          # tooling. Leave the scope off for cross-cutting changes.
+          scopes: |
+            api
+            listener
+            viewer
+            deploy
+            deps
+            dev
           requireScope: false
+          # release-please's own PRs ("chore(main): release x.y.z") carry
+          # this label and use the "main" scope.
+          ignoreLabels: |
+            autorelease: pending
 
       - name: Explain invalid title
         if: always() && steps.lint.outputs.error_message != null
@@ -57,10 +70,22 @@ jobs:
 
             - `feat(viewer): add session sharing`
             - `fix(api): handle a missing tracking id`
-            - `chore: update dependencies`
+            - `chore(deps): update dependencies`
+            - `ci: cache Docker builds`
 
             The allowed types are: `build`, `chore`, `ci`, `docs`, `feat`, `fix`,
             `perf`, `refactor`, `revert`, `style`, and `test`.
+
+            The allowed scopes are:
+
+            - `api`: the LiveTrack API and tracker
+            - `listener`: the email listener
+            - `viewer`: the Flutter web viewer and its nginx setup
+            - `deploy`: `compose.yml`, the Caddyfile and the tunnel setup
+            - `deps`: dependency updates
+            - `dev`: local tooling such as `launch.json`
+
+            Leave the scope off for changes that span several parts.
 
             See the [Conventional Commits specification](https://www.conventionalcommits.org/en/v1.0.0/)
             for details.

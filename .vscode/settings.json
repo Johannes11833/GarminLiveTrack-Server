@@ -1,5 +1,8 @@
 {
     "python-envs.defaultEnvManager": "ms-python.python:poetry",
     "python-envs.defaultPackageManager": "ms-python.python:poetry",
-    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+    // Flutter hides the web-server device outside remote setups; the
+    // "Flutter (web server)" launch config needs it on local machines too.
+    "dart.flutterShowWebServerDevice": "always"
 }

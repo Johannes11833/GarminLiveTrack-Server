@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.6.0](https://github.com/Johannes11833/GarminLiveTrack-Server/compare/v1.5.1...v1.6.0) (2026-11-12)
+
+
+### Features
+
+* list running and recent LiveTracks in the viewer ([#39](https://github.com/Johannes11833/GarminLiveTrack-Server/issues/39)) ([1b2d2c3](https://github.com/Johannes11833/GarminLiveTrack-Server/commit/1b2d2c37d3f7cc3f5efd0d7b3434cb8bd642d412))
+
+
+### Bug Fixes
+
+* **viewer:** draw hybrid labels on screen to avoid zoom doubling ([482a092](https://github.com/Johannes11833/GarminLiveTrack-Server/commit/482a0926e591292b42e9baaf49891bfb1fc9f26b))
+* **viewer:** keep map credit readable and on one line on phones ([#38](https://github.com/Johannes11833/GarminLiveTrack-Server/issues/38)) ([dfe64c6](https://github.com/Johannes11833/GarminLiveTrack-Server/commit/dfe64c6bef34f37b80bc5039ea41e01bd21ddc6e))
+* **viewer:** stop caching unhashed Flutter assets for a year ([#35](https://github.com/Johannes11833/GarminLiveTrack-Server/issues/35)) ([a10de9d](https://github.com/Johannes11833/GarminLiveTrack-Server/commit/a10de9d8d049cb38fbd0dc68196e750264ab3140))
+
 ## [1.5.1](https://github.com/Johannes11833/GarminLiveTrack-Server/compare/v1.5.0...v1.5.1) (2026-11-05)
 
 

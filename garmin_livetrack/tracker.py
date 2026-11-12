@@ -39,7 +39,7 @@ URL_RE = re.compile(
 CLEANUP_INTERVAL_SECONDS = int(os.getenv("LIVETRACK_TRACKER_CLEANUP_INTERVAL_SECONDS", 15 * 60))
 # How long a finished (stopped/ended/error) tracker stays viewable before
 # being dropped.
-TRACKER_RETENTION_SECONDS = int(os.getenv("LIVETRACK_TRACKER_RETENTION_SECONDS", 24 * 60 * 60))
+TRACKER_RETENTION_SECONDS = int(os.getenv("LIVETRACK_TRACKER_RETENTION_SECONDS", 3 * 24 * 60 * 60))
 # Safety net for a tracker stuck running (e.g. a hung worker thread):
 # force-stop and drop it after this long regardless of state.
 TRACKER_MAX_AGE_SECONDS = int(os.getenv("LIVETRACK_TRACKER_MAX_AGE_SECONDS", 2 * 24 * 60 * 60))
@@ -235,6 +235,28 @@ class Tracker:
                     "hasProfileImage": self.profile_image is not None,
                 }
             )
+
+    def summary(self) -> Dict[str, Any]:
+        """Compact entry for the viewer's session list. Includes the share
+        token so the viewer can open the session, like a push notification
+        link does."""
+        with self.lock:
+            session = self.session or {}
+            last = self.track[-1] if self.track else None
+            return {
+                "id": self.session_id,
+                "sessionToken": self.token,
+                "state": self.state,
+                "live": self.state not in TERMINAL_STATES,
+                "sessionName": session.get("sessionName"),
+                "athleteName": session.get("userDisplayName"),
+                "start": session.get("start"),
+                "end": session.get("end"),
+                "hasProfileImage": self.profile_image is not None,
+                "pointCount": len(self.track),
+                "distanceMeters": (last or {}).get("metaData", {}).get("TOTAL_DISTANCE"),
+                "lastPointTimestamp": (last or {}).get("timestamp"),
+            }
 
     def get_track(self) -> List[Dict[str, Any]]:
         with self.lock:

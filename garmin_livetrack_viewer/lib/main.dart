@@ -15,6 +15,8 @@ import 'package:web/web.dart' as web;
 
 import 'push_service.dart';
 
+part 'session_list.dart';
+
 // API origin; empty means "same origin" (production behind a reverse proxy).
 // Override for local development, e.g.:
 //   flutter run -d chrome --dart-define=API_BASE_URL=http://127.0.0.1:8000
@@ -22,8 +24,8 @@ const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
 // Session to show when the URL names none, so a debug launch opens straight
 // onto the API's dummy session or LIVETRACK_DEBUG_URL (a full share URL; see
-// .vscode/launch.json). Empty in release builds, where the session always
-// comes from the URL or the last one seen.
+// .vscode/launch.json). Empty in release builds, where the session comes
+// from the URL (a notification link) or the session list.
 const _debugSessionIdDefine = String.fromEnvironment('DEBUG_SESSION_ID');
 const _debugSessionTokenDefine = String.fromEnvironment('DEBUG_SESSION_TOKEN');
 final _debugUrlMatch = RegExp(r'session/([0-9a-fA-F-]+)/token/([0-9A-Za-z]+)')
@@ -37,8 +39,6 @@ final _debugSessionToken = _debugSessionTokenDefine.isNotEmpty
 
 const _senderNameStorageKey = 'livetrack_sender_name';
 const _pushTokenStorageKey = 'livetrack_push_token';
-const _lastSessionIdStorageKey = 'livetrack_last_session_id';
-const _lastSessionTokenStorageKey = 'livetrack_last_session_token';
 const _baseMapStorageKey = 'livetrack_base_map';
 
 class _ApiException implements Exception {
@@ -78,34 +78,6 @@ void _savePushToken(String token) {
   } catch (_) {}
 }
 
-String? _loadSavedSessionId() {
-  try {
-    return web.window.localStorage.getItem(_lastSessionIdStorageKey);
-  } catch (_) {
-    return null;
-  }
-}
-
-void _saveSessionId(String id) {
-  try {
-    web.window.localStorage.setItem(_lastSessionIdStorageKey, id);
-  } catch (_) {}
-}
-
-String? _loadSavedSessionToken() {
-  try {
-    return web.window.localStorage.getItem(_lastSessionTokenStorageKey);
-  } catch (_) {
-    return null;
-  }
-}
-
-void _saveSessionToken(String token) {
-  try {
-    web.window.localStorage.setItem(_lastSessionTokenStorageKey, token);
-  } catch (_) {}
-}
-
 _BaseMap _loadSavedBaseMap() {
   try {
     final saved = web.window.localStorage.getItem(_baseMapStorageKey);
@@ -121,27 +93,19 @@ void _saveBaseMap(_BaseMap baseMap) {
   } catch (_) {}
 }
 
-void _clearSessionCache(String? sessionId) {
-  if (sessionId == null) return;
-  try {
-    // Only clear the pair that failed: another tab may already have stored a
-    // newer session while this request was in flight.
-    if (_loadSavedSessionId() == sessionId) {
-      web.window.localStorage.removeItem(_lastSessionIdStorageKey);
-      web.window.localStorage.removeItem(_lastSessionTokenStorageKey);
-    }
-  } catch (_) {}
-}
-
-// Removes the session parameters from the address bar. Without this, the next
-// refresh would immediately read the stale id/token back out of the URL and
-// cache them again. Other parameters (e.g. the push token) are preserved.
-void _clearSessionFromUrl() {
+// Puts the shown session into the address bar (or removes it), without
+// reloading, so reloading or copying the link keeps that session. Other
+// parameters (e.g. the push token) are preserved.
+void _setSessionInUrl(String? id, String? token) {
   try {
     final base = Uri.base;
     final params = Map<String, String>.from(base.queryParameters)
       ..remove('id')
       ..remove('sessionToken');
+    if (id != null && token != null) {
+      params['id'] = id;
+      params['sessionToken'] = token;
+    }
     final url = Uri(
       scheme: base.scheme,
       userInfo: base.userInfo,
@@ -154,6 +118,10 @@ void _clearSessionFromUrl() {
     web.window.history.replaceState(null, '', url.toString());
   } catch (_) {}
 }
+
+// Removes the session parameters from the address bar. Without this, the next
+// refresh would immediately read the stale id/token back out of the URL.
+void _clearSessionFromUrl() => _setSessionInUrl(null, null);
 
 // Configurable colors: position (live dot), track (route), course (planned).
 const positionColor = Colors.deepPurple;
@@ -169,6 +137,11 @@ final buttonIconColor = buttonColor.computeLuminance() < 0.5
 // Width reserved on the right for the top-right FAB column (small FABs are
 // 40dp wide, plus its own 12px inset from the edge, plus a small gap).
 const _fabZoneWidth = 64.0;
+
+// From this window width on, the session list is a collapsible side panel
+// next to the map; below it, a full-screen menu.
+const _sidePanelBreakpoint = 900.0;
+const _sidePanelWidth = 320.0;
 
 // Below this width, the bottom-left overlay becomes a full-width bottom
 // panel instead of a small fixed card (phones / narrow windows).
@@ -425,7 +398,168 @@ DateTime? _parseIsoDateTime(Object? value) {
   return DateTime.tryParse(value)?.toLocal();
 }
 
-void main() => runApp(const LiveTrackApp());
+Uri _apiUri(String path) {
+  if (apiBaseUrl.isNotEmpty) return Uri.parse('$apiBaseUrl$path');
+  return Uri.base.replace(path: path, query: null, fragment: null);
+}
+
+/// Push registration shared by the session list and the map page. The push
+/// token from the invite link (`?token=`) both enables notifications and
+/// unlocks the session list.
+class _Push {
+  final service = ValueNotifier<PushService?>(null);
+
+  String? get token => service.value?.token;
+
+  void init() {
+    final urlToken = Uri.base.queryParameters['token']?.trim();
+    // iOS always launches an installed ("Add to Home Screen") PWA at the
+    // manifest's static start_url, dropping whatever query string was in
+    // the browser tab when it was installed -- so the token saved from an
+    // earlier visit with ?token=... in the URL is the only way to still
+    // show the bell icon once launched from the home screen. That save
+    // itself relies on localStorage, which iOS does NOT share between a
+    // Safari tab and the standalone app installed from it, so this only
+    // covers platforms where storage is shared (desktop, Android); iOS
+    // falls through to the manual-entry prompt in promptForPushToken.
+    final token = (urlToken != null && urlToken.isNotEmpty)
+        ? urlToken
+        : _loadSavedPushToken();
+    if (token == null || token.isEmpty) return;
+    if (urlToken != null && urlToken.isNotEmpty) _savePushToken(urlToken);
+    service.value = _create(token);
+  }
+
+  void setToken(String token) {
+    _savePushToken(token);
+    service.value?.dispose();
+    service.value = _create(token);
+  }
+
+  PushService _create(String token) =>
+      PushService(apiBaseUrl: apiBaseUrl, token: token)..init();
+}
+
+final _push = _Push();
+
+/// Notification bell, token prompt and push status toasts, shared by both
+/// pages through the global [_push] state.
+mixin _PushControls<T extends StatefulWidget> on State<T> {
+  PushService? _listenedService;
+
+  void showPushToast(String message);
+
+  void initPushControls() {
+    _push.service.addListener(_onPushServiceReplaced);
+    _onPushServiceReplaced();
+  }
+
+  void disposePushControls() {
+    _push.service.removeListener(_onPushServiceReplaced);
+    _listenedService?.removeListener(_onPushStatusChanged);
+  }
+
+  void _onPushServiceReplaced() {
+    _listenedService?.removeListener(_onPushStatusChanged);
+    _listenedService = _push.service.value;
+    _listenedService?.addListener(_onPushStatusChanged);
+  }
+
+  void _onPushStatusChanged() {
+    final service = _listenedService;
+    if (service == null || service.status != PushStatus.failed) return;
+    showPushToast('Notifications unavailable: ${service.error}');
+  }
+
+  Widget notificationButton() => ValueListenableBuilder<PushService?>(
+    valueListenable: _push.service,
+    builder: (context, service, _) => _NotificationButton(
+      service: service,
+      onPressed: _handleNotificationTap,
+    ),
+  );
+
+  void _handleNotificationTap() {
+    if (_push.service.value == null) {
+      promptForPushToken();
+    } else {
+      _enableNotifications();
+    }
+  }
+
+  Future<void> promptForPushToken({bool enableNotifications = true}) async {
+    final token = await showDialog<String>(
+      context: context,
+      builder: (context) => const _PushTokenDialog(),
+    );
+    if (!mounted || token == null || token.isEmpty) return;
+    _push.setToken(token);
+    if (enableNotifications) await _enableNotifications();
+  }
+
+  Future<void> _enableNotifications() async {
+    final service = _push.service.value;
+    if (service == null) return;
+    await service.enable();
+    switch (service.status) {
+      case PushStatus.enabled:
+        showPushToast('Notifications enabled.');
+      case PushStatus.denied:
+        showPushToast('Notifications blocked in browser settings.');
+      case PushStatus.failed:
+        showPushToast('Notifications unavailable: ${service.error}');
+      case PushStatus.unsupported:
+        showPushToast(
+          'Notifications need HTTPS and a supported browser (iOS 16.4+ when installed).',
+        );
+    }
+  }
+}
+
+/// Owns its text controller so it is disposed with the dialog. Disposing it
+/// right after `showDialog` returns broke the app: the dialog (and its text
+/// field) is still on screen for its closing animation at that point.
+class _PushTokenDialog extends StatefulWidget {
+  const _PushTokenDialog();
+
+  @override
+  State<_PushTokenDialog> createState() => _PushTokenDialogState();
+}
+
+class _PushTokenDialogState extends State<_PushTokenDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: const Text('Enter registration token'),
+    content: TextField(
+      controller: _controller,
+      autofocus: true,
+      decoration: const InputDecoration(labelText: 'Registration token'),
+      onSubmitted: (_) => _submit(),
+    ),
+    actions: [
+      TextButton(
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(onPressed: _submit, child: const Text('Continue')),
+    ],
+  );
+}
+
+void main() {
+  _push.init();
+  runApp(const LiveTrackApp());
+}
 
 // Flutter's default web/desktop ScrollBehavior only lets touch/stylus drags
 // pan a scrollable -- mouse-drag is excluded, which breaks click-and-drag
@@ -451,6 +585,9 @@ class LiveTrackApp extends StatelessWidget {
   );
 }
 
+/// The map, with the session list beside it (wide screens) or in a
+/// full-screen menu (phones). Opens on the session named in the URL (a
+/// notification link), else on the first running one in the list.
 class LiveTrackPage extends StatefulWidget {
   const LiveTrackPage({super.key});
 
@@ -459,10 +596,16 @@ class LiveTrackPage extends StatefulWidget {
 }
 
 class _LiveTrackPageState extends State<LiveTrackPage>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, _PushControls<LiveTrackPage> {
   static const _centerZoom = 13.0;
 
   final _mapController = MapController();
+  final _scaffoldKey = GlobalKey<ScaffoldState>();
+  final _sessionList = _SessionListModel();
+  // Side panel state on wide screens; phones use the drawer instead.
+  bool _panelOpen = true;
+  String? _sessionId;
+  String? _sessionToken;
   late final AnimationController _cameraAnimation = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 600),
@@ -487,117 +630,38 @@ class _LiveTrackPageState extends State<LiveTrackPage>
   List<(DateTime, double)> _elevationHistory = [];
   DateTime? _lastUpdate;
   String? _trackerState;
+  // From the session snapshot; the API answers 404 for the photo until the
+  // tracker has one (or always, for athletes without one).
+  bool _hasProfileImage = false;
   vt.Style? _vectorStyle;
   vt.Theme? _hybridVectorTheme;
   _BaseMap _baseMap = _loadSavedBaseMap();
-  PushService? _pushService;
   String _appVersion = '';
-
-  Uri _apiUri(String path) {
-    if (apiBaseUrl.isNotEmpty) return Uri.parse('$apiBaseUrl$path');
-    return Uri.base.replace(path: path, query: null, fragment: null);
-  }
 
   @override
   void initState() {
     super.initState();
+    _sessionId = _sessionIdFromUrl();
+    _sessionToken = _sessionTokenFromUrl();
+    _sessionList.addListener(_selectRunningSessionIfNone);
+    _sessionList.start();
     // Defer until after the first frame so ScaffoldMessenger is available
-    // for toasts (e.g. when no ?id= is provided).
-    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+    // for toasts, and the layout (phone or wide) is known.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Phones opened without a session link start on the list.
+      if (_sessionId == null && !_isWide(context)) {
+        _scaffoldKey.currentState?.openDrawer();
+      }
+      _refresh();
+    });
     _loadVectorStyle();
     _loadAppVersion();
     _timer = Timer.periodic(const Duration(seconds: 5), (_) => _refresh());
-    _initPush();
+    initPushControls();
   }
 
-  PushService _createPushService(String token) {
-    final service = PushService(apiBaseUrl: apiBaseUrl, token: token);
-    service.addListener(_onPushChanged);
-    service.init();
-    return service;
-  }
-
-  void _initPush() {
-    final urlToken = Uri.base.queryParameters['token']?.trim();
-    // iOS always launches an installed ("Add to Home Screen") PWA at the
-    // manifest's static start_url, dropping whatever query string was in
-    // the browser tab when it was installed -- so the token saved from an
-    // earlier visit with ?token=... in the URL is the only way to still
-    // show the bell icon once launched from the home screen. That save
-    // itself relies on localStorage, which iOS does NOT share between a
-    // Safari tab and the standalone app installed from it, so this only
-    // covers platforms where storage is shared (desktop, Android); iOS
-    // falls through to the manual-entry prompt in _promptForPushToken.
-    final token = (urlToken != null && urlToken.isNotEmpty)
-        ? urlToken
-        : _loadSavedPushToken();
-    if (token == null || token.isEmpty) return;
-    if (urlToken != null && urlToken.isNotEmpty) _savePushToken(urlToken);
-    _pushService = _createPushService(token);
-  }
-
-  void _handleNotificationTap() {
-    if (_pushService == null) {
-      _promptForPushToken();
-    } else {
-      _enableNotifications();
-    }
-  }
-
-  Future<void> _promptForPushToken() async {
-    final controller = TextEditingController();
-    final token = await showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Enter registration token'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Registration token'),
-          onSubmitted: (value) => Navigator.of(context).pop(value.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(controller.text.trim()),
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (!mounted || token == null || token.isEmpty) return;
-    _savePushToken(token);
-    setState(() => _pushService = _createPushService(token));
-    await _enableNotifications();
-  }
-
-  void _onPushChanged() {
-    final service = _pushService;
-    if (service == null || service.status != PushStatus.failed) return;
-    _showToast('Notifications unavailable: ${service.error}');
-  }
-
-  Future<void> _enableNotifications() async {
-    final service = _pushService;
-    if (service == null) return;
-    await service.enable();
-    switch (service.status) {
-      case PushStatus.enabled:
-        _showToast('Notifications enabled.');
-      case PushStatus.denied:
-        _showToast('Notifications blocked in browser settings.');
-      case PushStatus.failed:
-        _showToast('Notifications unavailable: ${service.error}');
-      case PushStatus.unsupported:
-        _showToast(
-          'Notifications need HTTPS and a supported browser (iOS 16.4+ when installed).',
-        );
-    }
-  }
+  @override
+  void showPushToast(String message) => _showToast(message);
 
   Future<void> _loadVectorStyle() async {
     try {
@@ -630,7 +694,9 @@ class _LiveTrackPageState extends State<LiveTrackPage>
 
   @override
   void dispose() {
-    _pushService?.dispose();
+    disposePushControls();
+    _sessionList.removeListener(_selectRunningSessionIfNone);
+    _sessionList.dispose();
     _vectorStyle?.dispose();
     _cameraAnimation.dispose();
     _timer?.cancel();
@@ -678,31 +744,62 @@ class _LiveTrackPageState extends State<LiveTrackPage>
     return series;
   }
 
-  // Falls back to the last id/token seen (from a previous ?id=/?sessionToken=
-  // in the URL, e.g. from tapping a notification) so reopening the app with
-  // neither in the URL -- closing and relaunching, or iOS's installed-PWA
-  // start_url dropping any query string -- still shows that last session.
-  String? _resolveSessionId() {
+  static String? _sessionIdFromUrl() {
     final idParam = Uri.base.queryParameters['id']?.trim();
-    if (idParam != null && idParam.isNotEmpty) {
-      _saveSessionId(idParam);
-      return idParam;
-    }
+    if (idParam != null && idParam.isNotEmpty) return idParam;
     if (_debugSessionId.isNotEmpty) return _debugSessionId;
-    return _loadSavedSessionId();
+    return null;
   }
 
   // The Garmin LiveTrack share token (not the push-registration token, which
   // uses the ?token= param). Required by the API's track/course/photo
   // endpoints so knowing the session id alone isn't enough to read them.
-  String? _resolveSessionToken() {
+  static String? _sessionTokenFromUrl() {
     final tokenParam = Uri.base.queryParameters['sessionToken']?.trim();
-    if (tokenParam != null && tokenParam.isNotEmpty) {
-      _saveSessionToken(tokenParam);
-      return tokenParam;
-    }
+    if (tokenParam != null && tokenParam.isNotEmpty) return tokenParam;
     if (_debugSessionToken.isNotEmpty) return _debugSessionToken;
-    return _loadSavedSessionToken();
+    return null;
+  }
+
+  String? _resolveSessionId() => _sessionId;
+
+  String? _resolveSessionToken() => _sessionToken;
+
+  static bool _isWide(BuildContext context) =>
+      MediaQuery.sizeOf(context).width >= _sidePanelBreakpoint;
+
+  /// [closeMenu] is false for automatic selections, so a phone opened
+  /// without a link keeps showing the list it started on.
+  void _selectSession(Map<String, dynamic> session, {bool closeMenu = true}) {
+    final id = session['id']?.toString();
+    final token = session['sessionToken']?.toString();
+    if (closeMenu) _scaffoldKey.currentState?.closeDrawer();
+    if (id == null || token == null || id == _sessionId) return;
+    _sessionId = id;
+    _sessionToken = token;
+    _setSessionInUrl(id, token);
+    _resetSessionState();
+    _refresh();
+  }
+
+  // Opened without a session (or the shown one vanished): show the first
+  // running session as soon as the list has one.
+  void _selectRunningSessionIfNone() {
+    if (_sessionId != null) return;
+    final running = _sessionList.sessions?.where((s) => s['live'] == true);
+    if (running == null || running.isEmpty) {
+      if (mounted) setState(() {}); // update the "pick a session" hint
+      return;
+    }
+    _selectSession(running.first, closeMenu: false);
+  }
+
+  void _toggleSessionList() {
+    if (_isWide(context)) {
+      setState(() => _panelOpen = !_panelOpen);
+    } else {
+      _scaffoldKey.currentState?.openDrawer();
+    }
   }
 
   String? _profileImageUrl(String sessionId) {
@@ -769,6 +866,11 @@ class _LiveTrackPageState extends State<LiveTrackPage>
 
   void _resetSessionState() {
     _lastFingerprint = '';
+    _lastToast = '';
+    // Let the next session's track position the map again.
+    _hasPositionedMap = false;
+    _userInteracted = false;
+    _focusedAtCurrentZoom = false;
     if (!mounted) return;
     setState(() {
       _track = [];
@@ -780,6 +882,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       _elevationHistory = [];
       _lastUpdate = null;
       _trackerState = null;
+      _hasProfileImage = false;
     });
   }
 
@@ -789,13 +892,8 @@ class _LiveTrackPageState extends State<LiveTrackPage>
     final sessionId = _resolveSessionId();
     final sessionToken = sessionId == null ? null : _resolveSessionToken();
     try {
-      if (sessionId == null) {
-        // Don't overwrite a "session cleared" message with the generic one.
-        if (_lastToast.isEmpty) {
-          _showToast('No session. Pass ?id=<session id> to the app URL.');
-        }
-        return;
-      }
+      // Nothing selected: the map shows a hint to pick a session.
+      if (sessionId == null) return;
       if (sessionToken == null) {
         _showToast(
           'Missing session token. Pass ?sessionToken=<token> to the app URL.',
@@ -814,16 +912,19 @@ class _LiveTrackPageState extends State<LiveTrackPage>
         _getList('/trackings/$sessionId/token/$encodedToken/track'),
         _getList('/trackings/$sessionId/token/$encodedToken/course'),
       ]);
-      if (!mounted) return;
+      // Another session was selected while this one was loading.
+      if (!mounted || sessionId != _sessionId) return;
       final trackData = data[0].whereType<Map<String, dynamic>>().toList();
       final track = _coordinates(trackData);
       final course = _coordinates(data[1]);
       final lastMeta = trackData.isNotEmpty ? trackData.last['metaData'] : null;
       final trackerState = snapshot['state']?.toString();
+      final hasProfileImage = snapshot['hasProfileImage'] == true;
       final fingerprint =
           '$sessionId|${track.length}|${course.length}|'
           '${track.isEmpty ? '' : track.last}|'
-          '${course.isEmpty ? '' : course.first}|$lastMeta|$trackerState';
+          '${course.isEmpty ? '' : course.first}|$lastMeta|$trackerState|'
+          '$hasProfileImage';
       if (fingerprint == _lastFingerprint) {
         // Retry a pending auto-center even when nothing changed.
         _centerMapOnce(track, course);
@@ -854,12 +955,15 @@ class _LiveTrackPageState extends State<LiveTrackPage>
         _elevationHistory = _metricSeries(trackData, 'ELEVATION');
         _lastUpdate = lastUpdate;
         _trackerState = trackerState;
+        _hasProfileImage = hasProfileImage;
       });
       _centerMapOnce(track, course);
     } on _ApiException catch (error) {
+      if (sessionId != _sessionId) return;
       if (error.statusCode == 404 || error.statusCode == 403) {
-        _clearSessionCache(sessionId);
         _clearSessionFromUrl();
+        _sessionId = null;
+        _sessionToken = null;
         _resetSessionState();
         _showToast(
           error.statusCode == 404
@@ -876,6 +980,9 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       _showToast('Cannot reach API: $error');
     } finally {
       _refreshing = false;
+      // A session switch during this refresh was skipped by the busy check
+      // above; load the newly selected session now.
+      if (sessionId != _sessionId && _sessionId != null) _refresh();
     }
   }
 
@@ -982,13 +1089,25 @@ class _LiveTrackPageState extends State<LiveTrackPage>
   Widget build(BuildContext context) {
     final sessionName = _session?['sessionName']?.toString().trim();
     final sessionId = _resolveSessionId();
-    final isCompact =
-        MediaQuery.sizeOf(context).width < _compactWidthBreakpoint;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final isWide = screenWidth >= _sidePanelBreakpoint;
+    final showSidePanel = isWide && _panelOpen;
+    // The map's overlays lay out for the width the map actually gets.
+    final mapWidth = screenWidth - (showSidePanel ? _sidePanelWidth + 1 : 0);
+    final isCompact = mapWidth < _compactWidthBreakpoint;
+    final sessionListPanel = _SessionListPanel(
+      model: _sessionList,
+      selectedId: sessionId,
+      onSelect: _selectSession,
+      onEnterToken: () => promptForPushToken(enableNotifications: false),
+    );
     final userOverlay = _LiveUserOverlay(
       compact: isCompact,
       userName: _session?['userDisplayName']?.toString().trim(),
       sessionName: sessionName,
-      profileImageUrl: sessionId != null ? _profileImageUrl(sessionId) : null,
+      profileImageUrl: sessionId != null && _hasProfileImage
+          ? _profileImageUrl(sessionId)
+          : null,
       startTime: _parseIsoDateTime(_session?['start']),
       lastUpdate: _lastUpdate,
       endTime: _parseIsoDateTime(_session?['end']),
@@ -1023,276 +1142,352 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       ],
     );
     return Scaffold(
+      key: _scaffoldKey,
+      // Opened only by the menu button: an edge swipe would fight with
+      // panning the map.
+      drawerEnableOpenDragGesture: false,
+      drawer: isWide
+          ? null
+          : Drawer(
+              width: screenWidth,
+              shape: const RoundedRectangleBorder(),
+              child: Column(
+                children: [
+                  // Same bar as the map screen, so the back arrow sits
+                  // exactly where the menu button that opened this was.
+                  AppBar(
+                    leading: IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      tooltip: 'Back to map',
+                      onPressed: () => _scaffoldKey.currentState?.closeDrawer(),
+                    ),
+                    title: const Text('LiveTracks'),
+                  ),
+                  Expanded(
+                    child: SafeArea(top: false, child: sessionListPanel),
+                  ),
+                ],
+              ),
+            ),
       appBar: AppBar(
+        leading: IconButton(
+          icon: Icon(showSidePanel ? Icons.menu_open : Icons.menu),
+          tooltip: showSidePanel ? 'Hide LiveTracks' : 'Show LiveTracks',
+          onPressed: _toggleSessionList,
+        ),
         title: const Text('Garmin LiveTrack'),
         actions: [
-          _NotificationButton(
-            service: _pushService,
-            onPressed: _handleNotificationTap,
-          ),
+          notificationButton(),
           IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh)),
         ],
       ),
-      body: Column(
+      body: Row(
         children: [
-          Expanded(
-            child: Stack(
-              children: [
-                FlutterMap(
-                  mapController: _mapController,
-                  options: MapOptions(
-                    initialCenter: const LatLng(0, 0),
-                    initialZoom: 2,
-                    interactionOptions: const InteractionOptions(
-                      flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
-                    ),
-                    onMapReady: () => _mapReady = true,
-                    onMapEvent: (event) {
-                      // Only real gestures count as user interaction; layout and
-                      // programmatic events (nonRotatedSizeChange, mapController)
-                      // fire on startup and must not block auto-centering.
-                      if (event.source != MapEventSource.mapController &&
-                          event.source != MapEventSource.nonRotatedSizeChange) {
-                        _userInteracted = true;
-                        _focusedAtCurrentZoom = false;
-                      }
-                    },
+          if (showSidePanel) ...[
+            SizedBox(width: _sidePanelWidth, child: sessionListPanel),
+            const VerticalDivider(width: 1),
+          ],
+          Expanded(child: _buildMapArea(context, isCompact, userOverlay)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMapArea(
+    BuildContext context,
+    bool isCompact,
+    Widget userOverlay,
+  ) {
+    return Column(
+      children: [
+        Expanded(
+          child: Stack(
+            children: [
+              FlutterMap(
+                mapController: _mapController,
+                options: MapOptions(
+                  initialCenter: const LatLng(0, 0),
+                  initialZoom: 2,
+                  interactionOptions: const InteractionOptions(
+                    flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
                   ),
-                  children: [
-                    if (_baseMap.showsImagery)
-                      TileLayer(
-                        urlTemplate: satelliteTileUrl,
-                        // Imagery is patchy beyond z18 outside cities; upscale
-                        // z18 tiles rather than show "no data" placeholders.
-                        maxNativeZoom: 18,
-                      ),
-                    if (_vectorStyle != null &&
-                        (_baseMap == _BaseMap.map ||
-                            (_baseMap == _BaseMap.hybrid &&
-                                _hybridVectorTheme != null)))
-                      vt.VectorTileLayer(
-                        key: ValueKey(_baseMap),
-                        theme: _baseMap == _BaseMap.hybrid
-                            ? _hybridVectorTheme!
-                            : _vectorStyle!.theme,
-                        tileProviders: _vectorStyle!.providers,
-                        rasterSources: _vectorStyle!.rasterSources,
-                        sprites: _vectorStyle!.sprites,
-                        // Screen-space labels are repositioned and redrawn on
-                        // every camera frame, which is the dominant UI-thread
-                        // cost while pinch-zooming on a phone. Bake them into
-                        // each tile on the same narrow layouts that use the
-                        // compact bottom sheet; keep the sharper screen-space
-                        // labels on desktop. Rotation is disabled in this map,
-                        // so the main visual trade-off of tile labels (text
-                        // rotating with the map) does not apply here.
-                        //
-                        // Except in hybrid: while zooming, the layer keeps the
-                        // previous level's tiles painted underneath until the
-                        // new level is ready. Hybrid tiles are transparent, so
-                        // those upscaled tiles -- and any labels baked into
-                        // them -- show through as huge, blurry duplicates.
-                        labelMode: isCompact && _baseMap != _BaseMap.hybrid
-                            ? vt.LabelMode.tile
-                            : vt.LabelMode.screen,
-                      ),
-                    PolylineLayer(
-                      polylines: [
-                        if (_course.isNotEmpty)
-                          Polyline(
-                            points: _course,
-                            color: courseColor,
-                            strokeWidth: 4,
-                          ),
-                        if (_track.isNotEmpty)
-                          Polyline(
-                            points: _track,
-                            color: trackColor,
-                            strokeWidth: 4,
-                          ),
-                      ],
+                  onMapReady: () => _mapReady = true,
+                  onMapEvent: (event) {
+                    // Only real gestures count as user interaction; layout and
+                    // programmatic events (nonRotatedSizeChange, mapController)
+                    // fire on startup and must not block auto-centering.
+                    if (event.source != MapEventSource.mapController &&
+                        event.source != MapEventSource.nonRotatedSizeChange) {
+                      _userInteracted = true;
+                      _focusedAtCurrentZoom = false;
+                    }
+                  },
+                ),
+                children: [
+                  if (_baseMap.showsImagery)
+                    TileLayer(
+                      urlTemplate: satelliteTileUrl,
+                      // Imagery is patchy beyond z18 outside cities; upscale
+                      // z18 tiles rather than show "no data" placeholders.
+                      maxNativeZoom: 18,
                     ),
-                    if (_track.isNotEmpty)
-                      MarkerLayer(
-                        markers: [
+                  if (_vectorStyle != null &&
+                      (_baseMap == _BaseMap.map ||
+                          (_baseMap == _BaseMap.hybrid &&
+                              _hybridVectorTheme != null)))
+                    vt.VectorTileLayer(
+                      key: ValueKey(_baseMap),
+                      theme: _baseMap == _BaseMap.hybrid
+                          ? _hybridVectorTheme!
+                          : _vectorStyle!.theme,
+                      tileProviders: _vectorStyle!.providers,
+                      rasterSources: _vectorStyle!.rasterSources,
+                      sprites: _vectorStyle!.sprites,
+                      // Screen-space labels are repositioned and redrawn on
+                      // every camera frame, which is the dominant UI-thread
+                      // cost while pinch-zooming on a phone. Bake them into
+                      // each tile on the same narrow layouts that use the
+                      // compact bottom sheet; keep the sharper screen-space
+                      // labels on desktop. Rotation is disabled in this map,
+                      // so the main visual trade-off of tile labels (text
+                      // rotating with the map) does not apply here.
+                      //
+                      // Except in hybrid: while zooming, the layer keeps the
+                      // previous level's tiles painted underneath until the
+                      // new level is ready. Hybrid tiles are transparent, so
+                      // those upscaled tiles -- and any labels baked into
+                      // them -- show through as huge, blurry duplicates.
+                      labelMode: isCompact && _baseMap != _BaseMap.hybrid
+                          ? vt.LabelMode.tile
+                          : vt.LabelMode.screen,
+                    ),
+                  PolylineLayer(
+                    polylines: [
+                      if (_course.isNotEmpty)
+                        Polyline(
+                          points: _course,
+                          color: courseColor,
+                          strokeWidth: 4,
+                        ),
+                      if (_track.isNotEmpty)
+                        Polyline(
+                          points: _track,
+                          color: trackColor,
+                          strokeWidth: 4,
+                        ),
+                    ],
+                  ),
+                  if (_track.isNotEmpty)
+                    MarkerLayer(
+                      markers: [
+                        Marker(
+                          point: _track.first,
+                          width: 28,
+                          height: 28,
+                          child: const _EndpointMarker(
+                            icon: Icons.flag,
+                            color: Colors.green,
+                          ),
+                        ),
+                        if (_trackerState == 'ended')
                           Marker(
-                            point: _track.first,
+                            point: _track.last,
                             width: 28,
                             height: 28,
                             child: const _EndpointMarker(
-                              icon: Icons.flag,
-                              color: Colors.green,
+                              icon: Icons.sports_score,
+                              color: Colors.redAccent,
                             ),
+                          )
+                        else
+                          Marker(
+                            point: _track.last,
+                            width: 72,
+                            height: 72,
+                            child: const _PulsingPositionMarker(),
                           ),
-                          if (_trackerState == 'ended')
-                            Marker(
-                              point: _track.last,
-                              width: 28,
-                              height: 28,
-                              child: const _EndpointMarker(
-                                icon: Icons.sports_score,
-                                color: Colors.redAccent,
-                              ),
-                            )
-                          else
-                            Marker(
-                              point: _track.last,
-                              width: 72,
-                              height: 72,
-                              child: const _PulsingPositionMarker(),
-                            ),
-                        ],
-                      ),
-                  ],
-                ),
-                Positioned(
-                  top: 12,
-                  left: 12,
-                  // Leave room so this row's chips never scroll/overlap
-                  // underneath the FAB column pinned at top-right.
-                  right: _fabZoneWidth,
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (_metaData != null && _metaData!.isNotEmpty)
-                          for (final entry in _metaDataRows(_metaData!)) ...[
-                            Tooltip(
-                              message: entry.$1,
-                              child: Card(
-                                margin: EdgeInsets.zero,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 6,
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      _metaIcon(entry.$1),
-                                      const SizedBox(width: 6),
-                                      Text(
-                                        entry.$2,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodyMedium
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                      ),
-                                    ],
-                                  ),
+                      ],
+                    ),
+                ],
+              ),
+              Positioned(
+                top: 12,
+                left: 12,
+                // Leave room so this row's chips never scroll/overlap
+                // underneath the FAB column pinned at top-right.
+                right: _fabZoneWidth,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_metaData != null && _metaData!.isNotEmpty)
+                        for (final entry in _metaDataRows(_metaData!)) ...[
+                          Tooltip(
+                            message: entry.$1,
+                            child: Card(
+                              margin: EdgeInsets.zero,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    _metaIcon(entry.$1),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      entry.$2,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                    ),
+                                  ],
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 6),
-                          ],
-                      ],
-                    ),
-                  ),
-                ),
-                if (isCompact)
-                  Positioned(left: 0, right: 0, bottom: 0, child: userOverlay)
-                else
-                  Positioned(left: 12, bottom: 12, child: userOverlay),
-                Positioned(
-                  right: 12,
-                  top: 12,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      FloatingActionButton.small(
-                        heroTag: 'focusPosition',
-                        backgroundColor: buttonColor,
-                        foregroundColor: buttonIconColor,
-                        tooltip: 'Focus current position',
-                        onPressed: _focusPosition,
-                        child: const Icon(Icons.my_location),
-                      ),
-                      const SizedBox(height: 8),
-                      FloatingActionButton.small(
-                        heroTag: 'zoomIn',
-                        backgroundColor: buttonColor,
-                        foregroundColor: buttonIconColor,
-                        tooltip: 'Zoom in',
-                        onPressed: () => _zoomBy(1),
-                        child: const Icon(Icons.add),
-                      ),
-                      const SizedBox(height: 8),
-                      FloatingActionButton.small(
-                        heroTag: 'zoomOut',
-                        backgroundColor: buttonColor,
-                        foregroundColor: buttonIconColor,
-                        tooltip: 'Zoom out',
-                        onPressed: () => _zoomBy(-1),
-                        child: const Icon(Icons.remove),
-                      ),
-                      const SizedBox(height: 8),
-                      MenuAnchor(
-                        alignmentOffset: const Offset(-112, 4),
-                        menuChildren: [
-                          for (final baseMap in _BaseMap.values)
-                            MenuItemButton(
-                              leadingIcon: Icon(baseMap.icon),
-                              trailingIcon: baseMap == _baseMap
-                                  ? const Icon(Icons.check)
-                                  : null,
-                              onPressed: () => _selectBaseMap(baseMap),
-                              child: Text(baseMap.label),
-                            ),
+                          ),
+                          const SizedBox(width: 6),
                         ],
-                        builder: (context, controller, _) =>
-                            FloatingActionButton.small(
-                              heroTag: 'baseMap',
-                              backgroundColor: buttonColor,
-                              foregroundColor: buttonIconColor,
-                              tooltip: 'Map style',
-                              onPressed: () => controller.isOpen
-                                  ? controller.close()
-                                  : controller.open(),
-                              // Shows the active layer.
-                              child: Icon(_baseMap.icon),
-                            ),
-                      ),
                     ],
                   ),
                 ),
-                Positioned(
-                  // Both edges pinned so the longer satellite credit shrinks
-                  // to fit narrow screens on one line rather than running
-                  // off them; not truncated, as Esri's terms require the
-                  // full credit to stay visible.
-                  left: 4,
-                  right: 4,
-                  bottom: 2,
-                  child: IgnorePointer(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        _baseMap.showsImagery
-                            ? '$satelliteAttribution · v$_appVersion'
-                            : 'v$_appVersion',
-                        maxLines: 1,
-                        softWrap: false,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          // White over imagery, where the grey is unreadable.
-                          // Not on compact layouts: there the full-width
-                          // bottom sheet sits behind this text, not the map.
-                          color: _baseMap.showsImagery && !isCompact
-                              ? Colors.white.withValues(alpha: 0.9)
-                              : Theme.of(context).colorScheme.onSurface
-                                    .withValues(alpha: 0.4),
-                        ),
+              ),
+              if (_sessionId == null)
+                const SizedBox.shrink()
+              else if (isCompact)
+                Positioned(left: 0, right: 0, bottom: 0, child: userOverlay)
+              else
+                Positioned(left: 12, bottom: 12, child: userOverlay),
+              Positioned(
+                right: 12,
+                top: 12,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FloatingActionButton.small(
+                      heroTag: 'focusPosition',
+                      backgroundColor: buttonColor,
+                      foregroundColor: buttonIconColor,
+                      tooltip: 'Focus current position',
+                      onPressed: _focusPosition,
+                      child: const Icon(Icons.my_location),
+                    ),
+                    const SizedBox(height: 8),
+                    FloatingActionButton.small(
+                      heroTag: 'zoomIn',
+                      backgroundColor: buttonColor,
+                      foregroundColor: buttonIconColor,
+                      tooltip: 'Zoom in',
+                      onPressed: () => _zoomBy(1),
+                      child: const Icon(Icons.add),
+                    ),
+                    const SizedBox(height: 8),
+                    FloatingActionButton.small(
+                      heroTag: 'zoomOut',
+                      backgroundColor: buttonColor,
+                      foregroundColor: buttonIconColor,
+                      tooltip: 'Zoom out',
+                      onPressed: () => _zoomBy(-1),
+                      child: const Icon(Icons.remove),
+                    ),
+                    const SizedBox(height: 8),
+                    MenuAnchor(
+                      alignmentOffset: const Offset(-112, 4),
+                      menuChildren: [
+                        for (final baseMap in _BaseMap.values)
+                          MenuItemButton(
+                            leadingIcon: Icon(baseMap.icon),
+                            trailingIcon: baseMap == _baseMap
+                                ? const Icon(Icons.check)
+                                : null,
+                            onPressed: () => _selectBaseMap(baseMap),
+                            child: Text(baseMap.label),
+                          ),
+                      ],
+                      builder: (context, controller, _) =>
+                          FloatingActionButton.small(
+                            heroTag: 'baseMap',
+                            backgroundColor: buttonColor,
+                            foregroundColor: buttonIconColor,
+                            tooltip: 'Map style',
+                            onPressed: () => controller.isOpen
+                                ? controller.close()
+                                : controller.open(),
+                            // Shows the active layer.
+                            child: Icon(_baseMap.icon),
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              Positioned(
+                // Both edges pinned so the longer satellite credit shrinks
+                // to fit narrow screens on one line rather than running
+                // off them; not truncated, as Esri's terms require the
+                // full credit to stay visible.
+                left: 4,
+                right: 4,
+                bottom: 2,
+                child: IgnorePointer(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      _baseMap.showsImagery
+                          ? '$satelliteAttribution · v$_appVersion'
+                          : 'v$_appVersion',
+                      maxLines: 1,
+                      softWrap: false,
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        // White over imagery, where the grey is unreadable.
+                        // Not on compact layouts: there the full-width
+                        // bottom sheet sits behind this text, not the map.
+                        color: _baseMap.showsImagery && !isCompact
+                            ? Colors.white.withValues(alpha: 0.9)
+                            : Theme.of(context).colorScheme.onSurface
+                                  .withValues(alpha: 0.4),
                       ),
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+              if (_sessionId == null) _buildPickSessionHint(context),
+            ],
           ),
-        ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildPickSessionHint(BuildContext context) {
+    final sessions = _sessionList.sessions;
+    final text = sessions != null && sessions.isEmpty
+        ? 'No LiveTracks right now.'
+        : 'Pick a LiveTrack from the list.';
+    return Center(
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(text),
+              if (!_isWide(context) || !_panelOpen) ...[
+                const SizedBox(height: 12),
+                FilledButton.icon(
+                  onPressed: _toggleSessionList,
+                  icon: const Icon(Icons.menu),
+                  label: const Text('Show LiveTracks'),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

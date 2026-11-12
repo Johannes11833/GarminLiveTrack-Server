@@ -239,6 +239,30 @@ class UnsubscribeRequest(BaseModel):
     endpoint: str
 
 
+@limiter.shared_limit("60/minute", scope="push_session_list")
+def require_push_token(request: Request, x_push_token: str = Header(default="")) -> None:
+    """The push registration token (from the invite link) also unlocks the
+    session list: its holders get every session's link by notification
+    anyway, so the list shows them nothing new -- it only covers
+    notifications that didn't arrive."""
+    if not push.token_valid(x_push_token.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid or missing push token.",
+        )
+
+
+@app.get("/push/sessions", dependencies=[Depends(require_push_token)])
+def list_sessions():
+    """Running sessions first, then finished ones; newest first in each."""
+    with manager.lock:
+        trackers = list(manager.trackers.values())
+    summaries = [tracker.summary() for tracker in trackers]
+    summaries.sort(key=lambda s: s["start"] or "", reverse=True)
+    summaries.sort(key=lambda s: not s["live"])
+    return summaries
+
+
 @app.get("/push/public-key")
 def get_public_key():
     return {"publicKey": push.public_key()}

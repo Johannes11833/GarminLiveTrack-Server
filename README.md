@@ -207,11 +207,15 @@ viewer opens straight onto it.
 - `GET /trackings/{session_id}/token/{token}/profile-image` returns the user's profile photo.
 - `POST /trackings/{session_id}/token/{token}/message` sends a spectator message.
 - `DELETE /trackings/{session_id}` requests that session stop (also requires the API token).
+- `GET /push/sessions` lists all sessions for the viewer's start page, running
+  ones first. It requires the push registration token (`LIVETRACK_PUSH_TOKEN`)
+  in an `X-Push-Token` header instead of the API token: everyone who has it
+  receives every session's link by notification anyway.
 
 Trackers live in memory only (nothing persists across a restart) and are
 swept periodically so the process doesn't accumulate them forever: a
 finished session (stopped/ended/error) is dropped after
-`LIVETRACK_TRACKER_RETENTION_SECONDS` (default 1 day); a tracker still
+`LIVETRACK_TRACKER_RETENTION_SECONDS` (default 3 days); a tracker still
 running past `LIVETRACK_TRACKER_MAX_AGE_SECONDS` (default 2 days) is force-
 stopped and dropped as a safety net against a stuck worker. The sweep itself
 runs every `LIVETRACK_TRACKER_CLEANUP_INTERVAL_SECONDS` (default 15 minutes).
@@ -345,7 +349,7 @@ LIVETRACK_ENABLE_DUMMY_MODE = "1"
 # optional: tracker cleanup sweep (see "LiveTrack REST API" above for what
 # each one does); defaults shown here
 LIVETRACK_TRACKER_CLEANUP_INTERVAL_SECONDS = "900"
-LIVETRACK_TRACKER_RETENTION_SECONDS = "86400"
+LIVETRACK_TRACKER_RETENTION_SECONDS = "259200"
 LIVETRACK_TRACKER_MAX_AGE_SECONDS = "172800"
 
 # optional: only needed if using the cloudflared service to expose the app

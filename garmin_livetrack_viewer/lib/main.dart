@@ -630,6 +630,9 @@ class _LiveTrackPageState extends State<LiveTrackPage>
   List<(DateTime, double)> _elevationHistory = [];
   DateTime? _lastUpdate;
   String? _trackerState;
+  // From the session snapshot; the API answers 404 for the photo until the
+  // tracker has one (or always, for athletes without one).
+  bool _hasProfileImage = false;
   vt.Style? _vectorStyle;
   vt.Theme? _hybridVectorTheme;
   _BaseMap _baseMap = _loadSavedBaseMap();
@@ -879,6 +882,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       _elevationHistory = [];
       _lastUpdate = null;
       _trackerState = null;
+      _hasProfileImage = false;
     });
   }
 
@@ -915,10 +919,12 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       final course = _coordinates(data[1]);
       final lastMeta = trackData.isNotEmpty ? trackData.last['metaData'] : null;
       final trackerState = snapshot['state']?.toString();
+      final hasProfileImage = snapshot['hasProfileImage'] == true;
       final fingerprint =
           '$sessionId|${track.length}|${course.length}|'
           '${track.isEmpty ? '' : track.last}|'
-          '${course.isEmpty ? '' : course.first}|$lastMeta|$trackerState';
+          '${course.isEmpty ? '' : course.first}|$lastMeta|$trackerState|'
+          '$hasProfileImage';
       if (fingerprint == _lastFingerprint) {
         // Retry a pending auto-center even when nothing changed.
         _centerMapOnce(track, course);
@@ -949,6 +955,7 @@ class _LiveTrackPageState extends State<LiveTrackPage>
         _elevationHistory = _metricSeries(trackData, 'ELEVATION');
         _lastUpdate = lastUpdate;
         _trackerState = trackerState;
+        _hasProfileImage = hasProfileImage;
       });
       _centerMapOnce(track, course);
     } on _ApiException catch (error) {
@@ -1098,7 +1105,9 @@ class _LiveTrackPageState extends State<LiveTrackPage>
       compact: isCompact,
       userName: _session?['userDisplayName']?.toString().trim(),
       sessionName: sessionName,
-      profileImageUrl: sessionId != null ? _profileImageUrl(sessionId) : null,
+      profileImageUrl: sessionId != null && _hasProfileImage
+          ? _profileImageUrl(sessionId)
+          : null,
       startTime: _parseIsoDateTime(_session?['start']),
       lastUpdate: _lastUpdate,
       endTime: _parseIsoDateTime(_session?['end']),

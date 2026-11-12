@@ -1151,24 +1151,22 @@ class _LiveTrackPageState extends State<LiveTrackPage>
           : Drawer(
               width: screenWidth,
               shape: const RoundedRectangleBorder(),
-              child: SafeArea(
-                child: Column(
-                  children: [
-                    ListTile(
-                      title: Text(
-                        'LiveTracks',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                      trailing: IconButton(
-                        icon: const Icon(Icons.close),
-                        tooltip: 'Close',
-                        onPressed: () =>
-                            _scaffoldKey.currentState?.closeDrawer(),
-                      ),
+              child: Column(
+                children: [
+                  // Same bar as the map screen, so the back arrow sits
+                  // exactly where the menu button that opened this was.
+                  AppBar(
+                    leading: IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      tooltip: 'Back to map',
+                      onPressed: () => _scaffoldKey.currentState?.closeDrawer(),
                     ),
-                    Expanded(child: sessionListPanel),
-                  ],
-                ),
+                    title: const Text('LiveTracks'),
+                  ),
+                  Expanded(
+                    child: SafeArea(top: false, child: sessionListPanel),
+                  ),
+                ],
               ),
             ),
       appBar: AppBar(
